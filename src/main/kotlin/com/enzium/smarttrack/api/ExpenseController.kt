@@ -18,4 +18,7 @@ class ExpenseController(private val service: ExpenseService) {
 
     @GetMapping
     fun all(): List<Expense> = service.getAll()
+
+    @GetMapping("/summary")
+    fun summary(): ExpenseSummaryDto = service.getExpenseSummary()
 }
