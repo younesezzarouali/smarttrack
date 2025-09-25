@@ -2,6 +2,7 @@ package com.enzium.smarttrack.config
 
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.http.HttpMethod
 import org.springframework.security.config.Customizer
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.web.SecurityFilterChain
@@ -19,6 +20,7 @@ class SecurityConfig {
         http
             .csrf { it.disable() }
             .authorizeHttpRequests {
+                it.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll() // 👈 préflight
                 it.anyRequest().permitAll()
             }
             .cors(Customizer.withDefaults()) // 👈 Active CORS
@@ -28,7 +30,7 @@ class SecurityConfig {
     @Bean
     fun corsConfigurationSource(): CorsConfigurationSource {
         val configuration = CorsConfiguration()
-        configuration.allowedOrigins = listOf("http://localhost:4200", "https://duk6iz0hn3884.cloudfront.net") // 👈 ton front
+        configuration.allowedOrigins = listOf("https://www.ezzium.fr") // 👈 ton front
         configuration.allowedMethods = listOf("GET", "POST", "PUT", "DELETE", "OPTIONS")
         configuration.allowedHeaders = listOf("*")
         configuration.allowCredentials = true
