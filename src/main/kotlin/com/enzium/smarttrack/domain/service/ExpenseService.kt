@@ -1,6 +1,6 @@
 package com.enzium.smarttrack.domain.service
 
-import com.enzium.smarttrack.api.ExpenseSummaryDto
+import com.enzium.smarttrack.function.ExpenseSummaryDto
 import com.enzium.smarttrack.domain.model.Expense
 import com.enzium.smarttrack.domain.model.ExpenseCategory
 import com.enzium.smarttrack.domain.ExpenseRepository
