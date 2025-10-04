@@ -1,4 +1,4 @@
-name: Build & Deploy Quarkus Lambda
+name: Build & Deploy Quarkus Lambda via S3
 
 on:
   push:
@@ -8,22 +8,26 @@ on:
 env:
   AWS_REGION: eu-west-3
   LAMBDA_FUNCTION_NAME: smarttrack-api
+  S3_BUCKET: smarttrack-lambda-bucket
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      # 1️⃣ Checkout du code source
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      # 2️⃣ Setup JDK 17
+      - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      - name: Cache Maven dependencies
+      # 3️⃣ Cache Maven (accélère les builds)
+      - name: Cache Maven
         uses: actions/cache@v4
         with:
           path: ~/.m2/repository
@@ -31,13 +35,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-maven-
 
-      # 🧱 Build du projet Quarkus pour Lambda
-      - name: Build Quarkus Lambda JAR
-        run: |
-          mvn clean package -DskipTests \
-            -Dquarkus.package.type=uber-jar
+      # 4️⃣ Build Quarkus en mode JVM (pas natif)
+      - name: Build Quarkus app
+        run: mvn clean package -DskipTests
 
-      # ⚙️ Configuration des credentials AWS
+      # 5️⃣ Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -45,11 +47,18 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 🚀 Déploiement de la fonction Lambda
-      - name: Deploy to AWS Lambda
+      # 6️⃣ Upload ZIP vers S3
+      - name: Upload to S3 (overwrite previous build)
         run: |
-          JAR_FILE="target/function.zip"
-          echo "Deploying $JAR_FILE to Lambda function: ${{ env.LAMBDA_FUNCTION_NAME }}"
+          ZIP_FILE="target/function.zip"
+          echo "Uploading $ZIP_FILE to s3://${{ env.S3_BUCKET }}/function.zip"
+          aws s3 cp "$ZIP_FILE" "s3://${{ env.S3_BUCKET }}/function.zip" --region ${{ env.AWS_REGION }}
+
+      # 7️⃣ Update Lambda depuis le S3
+      - name: Update Lambda function code
+        run: |
+          echo "Updating Lambda ${{ env.LAMBDA_FUNCTION_NAME }} from S3..."
           aws lambda update-function-code \
             --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-            --zip-file fileb://$JAR_FILE
+            --s3-bucket ${{ env.S3_BUCKET }} \
+            --s3-key function.zip
