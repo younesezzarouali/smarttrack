@@ -1,4 +1,4 @@
-name: Build & Deploy Lambda
+name: Build & Deploy Quarkus Lambda
 
 on:
   push:
@@ -14,16 +14,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup JDK 17
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      - name: Cache Maven
+      - name: Cache Maven dependencies
         uses: actions/cache@v4
         with:
           path: ~/.m2/repository
@@ -31,10 +31,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-maven-
 
-      - name: Build with Maven (shade/repackage)
-        run: mvn clean package -DskipTests
+      # 🧱 Build du projet Quarkus pour Lambda
+      - name: Build Quarkus Lambda JAR
+        run: |
+          mvn clean package -DskipTests \
+            -Dquarkus.package.type=uber-jar
 
-      # ⚡ Configure AWS creds
+      # ⚙️ Configuration des credentials AWS
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -42,11 +45,11 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # ⚡ Déploiement Lambda (update uniquement)
-      - name: Update Lambda function code
+      # 🚀 Déploiement de la fonction Lambda
+      - name: Deploy to AWS Lambda
         run: |
-          JAR_FILE="target/smarttrack-0.0.1-SNAPSHOT.jar"
-          echo "Deploying $JAR_FILE to smarttrack-api ..."
+          JAR_FILE="target/quarkus-app/quarkus-run.jar"
+          echo "Deploying $JAR_FILE to Lambda function: ${{ env.LAMBDA_FUNCTION_NAME }}"
           aws lambda update-function-code \
-            --function-name smarttrack-api \
+            --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
             --zip-file fileb://$JAR_FILE
