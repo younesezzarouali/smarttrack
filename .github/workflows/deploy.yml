@@ -48,7 +48,7 @@ jobs:
       # 🚀 Déploiement de la fonction Lambda
       - name: Deploy to AWS Lambda
         run: |
-          JAR_FILE="target/quarkus-app/quarkus-run.jar"
+          JAR_FILE="target/smarttrack-1.0.0-SNAPSHOT-runner.jar"
           echo "Deploying $JAR_FILE to Lambda function: ${{ env.LAMBDA_FUNCTION_NAME }}"
           aws lambda update-function-code \
             --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
