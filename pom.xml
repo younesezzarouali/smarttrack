@@ -46,16 +46,22 @@
             <artifactId>quarkus-resteasy-reactive-jackson</artifactId>
         </dependency>
 
+        <!-- Hibernate ORM with Panache Kotlin -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-orm-panache-kotlin</artifactId>
+        </dependency>
+
+        <!-- JDBC Driver (H2 for now, or Postgres if preferred) -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jdbc-h2</artifactId>
+        </dependency>
+
         <!-- AWS Lambda -->
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-amazon-lambda</artifactId>
-        </dependency>
-
-        <!-- (Optionnel) DynamoDB -->
-        <dependency>
-            <groupId>io.quarkiverse.amazonservices</groupId>
-            <artifactId>quarkus-amazon-dynamodb</artifactId>
         </dependency>
 
         <!-- Injection de dépendances -->
