@@ -57,6 +57,37 @@ class GeminiService(
         }
     }
 
+    fun generateBriefing(history: List<LifeEvent>): String {
+        if (apiKey == "NO_KEY" || apiKey.isBlank()) return "Configuration requise."
+        if (history.isEmpty()) return "Journée vierge. Prêt à optimiser ton temps et ton budget ?"
+
+        val historyContext = history.joinToString("\n") { 
+            "- [${it.type}] ${it.content} (${it.payload})" 
+        }
+        
+        val prompt = """
+            Tu es un assistant Life OS ultra-minimaliste. Voici les événements de la journée :
+            $historyContext
+            
+            Fais un résumé percutant en 15 mots maximum. 
+            Utilise des verbes d'action. 
+            Sois factuel sur les chiffres clés.
+            Réponds uniquement en texte brut.
+        """.trimIndent()
+
+        val request = GeminiRequest(
+            contents = listOf(Content(role = "user", parts = listOf(Part(text = prompt)))),
+            generationConfig = GenerationConfig(response_mime_type = "text/plain")
+        )
+
+        return try {
+            val response = executeWithRetry(3) { geminiApi.generateContent(apiKey, request) }
+            response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "C'est parti !"
+        } catch (e: Exception) {
+            "Continue de noter ton activité."
+        }
+    }
+
     private fun <T> executeWithRetry(maxAttempts: Int, block: () -> T): T {
         var lastException: Exception? = null
         for (attempt in 1..maxAttempts) {
@@ -141,9 +172,5 @@ class GeminiService(
             log.error("Failed to parse AI JSON", e)
             throw RuntimeException("AI format error")
         }
-    }
-
-    fun generateBriefing(history: List<LifeEvent>): String {
-        return "Insight calculated in interaction."
     }
 }
