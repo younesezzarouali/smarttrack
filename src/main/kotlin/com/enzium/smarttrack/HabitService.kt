@@ -6,6 +6,8 @@ import software.amazon.awssdk.services.dynamodb.DynamoDbClient
 import software.amazon.awssdk.services.dynamodb.model.*
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 
 @ApplicationScoped
 class HabitService(
@@ -43,7 +45,7 @@ class HabitService(
                     lastCompletedDate = item["lastCompletedDate"]?.s() ?: "",
                     active = item["active"]?.bool() ?: true
                 )
-            }
+            }.filter { it.active }
         } catch (e: Exception) {
             log.error("Failed to fetch habits", e)
             emptyList()
@@ -51,28 +53,27 @@ class HabitService(
     }
 
     fun syncDailyProgress(userId: String = "default-user") {
-        val today = LocalDate.now().format(DateTimeFormatter.ISO_DATE)
-        val habits = getHabits(userId).filter { it.active }
+        val todayStr = LocalDate.now().format(DateTimeFormatter.ISO_DATE)
+        val habits = getHabits(userId)
         if (habits.isEmpty()) return
 
-        // Get events from today (UTC)
-        val startOfDay = LocalDate.now().atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
-        val todayEvents = eventService.listAll(userId, sinceTimestamp = startOfDay)
+        // Search for all events in the last 24 hours to be safe with timezones
+        val sinceTs = Instant.now().minus(24, ChronoUnit.HOURS).toEpochMilli()
+        val recentEvents = eventService.listAll(userId, sinceTimestamp = sinceTs)
 
-        log.infof("Syncing %d habits with %d today events", habits.size, todayEvents.size)
+        log.infof("Syncing %d habits with %d recent events", habits.size, recentEvents.size)
 
         val progressMap = mutableMapOf<String, Double>()
         val newlyCompleted = mutableListOf<String>()
 
         habits.forEach { habit ->
-            // SMART MATCHING: by Category OR by Name keyword
             val totalValue = when (habit.type) {
-                "TIME" -> todayEvents.filter { 
+                "TIME" -> recentEvents.filter { 
                     (it.type.equals(habit.category, ignoreCase = true) || it.content.contains(habit.name, ignoreCase = true)) 
                     && it.payload.containsKey("duration_min") 
                 }.sumOf { it.payload["duration_min"]?.toDouble() ?: 0.0 }
                 
-                "COUNT" -> todayEvents.filter { 
+                "COUNT" -> recentEvents.filter { 
                     (it.type.equals(habit.category, ignoreCase = true) || it.content.contains(habit.name, ignoreCase = true))
                     && it.payload.containsKey("value") 
                 }.sumOf { it.payload["value"]?.toDouble() ?: 0.0 }
@@ -80,15 +81,13 @@ class HabitService(
                 else -> 0.0
             }
             
-            log.infof("Habit '%s' progress: %.1f / %.1f", habit.name, totalValue, habit.targetValue)
             progressMap[habit.id] = totalValue
-            
             if (totalValue >= habit.targetValue) {
                 newlyCompleted.add(habit.id)
-                updateStreak(habit, today)
+                updateStreak(habit, todayStr)
             }
         }
-        saveProgress(userId, today, progressMap, newlyCompleted)
+        saveProgress(userId, todayStr, progressMap, newlyCompleted)
     }
 
     private fun updateStreak(habit: Habit, today: String) {
@@ -146,9 +145,5 @@ class HabitService(
         } catch (e: Exception) {
             null
         }
-    }
-
-    fun setupDefaultHabits(userId: String = "default-user") {
-        // Obsolete with manual creation modal, but keeping for first-run logic
     }
 }

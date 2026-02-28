@@ -1,7 +1,6 @@
 package com.enzium.smarttrack
 
 import io.smallrye.common.annotation.Blocking
-import jakarta.inject.Inject
 import jakarta.ws.rs.*
 import jakarta.ws.rs.core.Response
 import jakarta.ws.rs.core.MediaType
@@ -12,26 +11,24 @@ import java.util.UUID
 @Consumes(MediaType.APPLICATION_JSON)
 class HabitResource(
     private val repository: UnifiedRepository,
-    private val habitService: HabitService // Keeping legacy service for now for transition
+    private val habitService: HabitService
 ) {
 
     @GET
     @Path("/active")
     @Blocking
     fun getActive(): List<Habit> {
-        // Migration path: read from new repository
         return repository.getActiveHabits("default-user")
     }
 
     @POST
     @Blocking
     fun create(request: HabitCreationIntent): Response {
-        if (request.name.isBlank()) {
-            throw BadRequestException("Habit name is required")
-        }
+        if (request.name.isBlank()) throw BadRequestException("Name required")
 
         val habit = Habit(
             id = UUID.randomUUID().toString(),
+            userId = "default-user",
             name = request.name,
             type = request.type,
             targetValue = request.target,
@@ -42,11 +39,17 @@ class HabitResource(
         )
 
         repository.saveHabit("default-user", habit)
-        
-        // Also ensure legacy table is updated for compatibility during migration
         habitService.syncDailyProgress()
-
         return Response.status(Response.Status.CREATED).entity(habit).build()
+    }
+
+    @DELETE
+    @Path("/{id}")
+    @Blocking
+    fun delete(@PathParam("id") id: String): Response {
+        repository.archiveHabit("default-user", id)
+        habitService.syncDailyProgress()
+        return Response.noContent().build()
     }
 
     @POST
