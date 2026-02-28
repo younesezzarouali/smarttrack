@@ -5,6 +5,7 @@ import jakarta.ws.rs.*
 import jakarta.ws.rs.core.Response
 import jakarta.ws.rs.core.MediaType
 import org.jboss.logging.Logger
+import java.util.*
 
 @Path("/life")
 @Produces(MediaType.APPLICATION_JSON)
@@ -20,15 +21,25 @@ class LifeResource(
     @Blocking
     fun magic(input: Map<String, String>): Response {
         val text = input["text"] ?: throw BadRequestException("Input text is required")
-        
-        // 1. Fetch only the 50 most recent events to limit token usage and costs
         val history = eventService.listAll(limit = 50)
-        
-        // 2. Interact with AI
         val result = geminiService.interact(text, history)
-        
-        // 3. Return the result (Capture or Answer)
         return Response.ok(result).build()
+    }
+
+    @GET
+    @Path("/briefing")
+    @Blocking
+    fun getBriefing(): Map<String, String> {
+        // Fetch events for "Today"
+        val calendar = Calendar.getInstance()
+        calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        val startOfDay = calendar.timeInMillis
+
+        val todayEvents = eventService.listAll().filter { it.timestamp >= startOfDay }
+        val summary = geminiService.generateBriefing(todayEvents)
+        return mapOf("briefing" to summary)
     }
 
     @POST

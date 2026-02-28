@@ -30,6 +30,34 @@ class GeminiService(
         stream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
     }
 
+    fun generateBriefing(history: List<LifeEvent>): String {
+        if (apiKey == "NO_KEY" || apiKey.isBlank()) return "Assistant configuration incomplete."
+        if (history.isEmpty()) return "Welcome! Start by recording your first activity or expense today."
+
+        val historyContext = history.joinToString("\n") { "- [${it.type}] ${it.content}" }
+        
+        val prompt = """
+            Tu es un assistant Life OS. Voici les événements de la journée de l'utilisateur :
+            $historyContext
+            
+            Fais un résumé très court (3 lignes max), motivant et humain de sa journée. 
+            Utilise le 'tu'. Sois percutant.
+            Réponds uniquement en texte brut, pas de JSON ici.
+        """.trimIndent()
+
+        val request = GeminiRequest(
+            contents = listOf(Content(role = "user", parts = listOf(Part(text = prompt)))),
+            generationConfig = GenerationConfig(response_mime_type = "text/plain")
+        )
+
+        return try {
+            val response = executeWithRetry(3) { geminiApi.generateContent(apiKey, request) }
+            response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "Good day! Keep track of your progress."
+        } catch (e: Exception) {
+            "Ready to help you track your day!"
+        }
+    }
+
     fun interact(userInput: String, history: List<LifeEvent>): GeminiInteractionResponse {
         if (apiKey == "NO_KEY" || apiKey.isBlank()) throw RuntimeException("Gemini API Key is not configured")
 
@@ -66,14 +94,12 @@ class GeminiService(
                 break
             }
         }
-        throw RuntimeException("AI Service temporarily unavailable: ${lastException?.message}", lastException)
+        throw RuntimeException("AI Service unavailable", lastException)
     }
 
     private fun parseInteractionResponse(response: GeminiResponse): GeminiInteractionResponse {
         val jsonString = response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text
             ?: throw RuntimeException("AI returned an empty response")
-        
-        log.debugf("Gemini Raw Output: %s", jsonString)
         
         return try {
             val node = mapper.readTree(jsonString)
@@ -100,7 +126,6 @@ class GeminiService(
 
             GeminiInteractionResponse(intent, answer, events)
         } catch (e: Exception) {
-            log.error("Failed to parse AI output JSON", e)
             throw RuntimeException("Structural error in AI response", e)
         }
     }
