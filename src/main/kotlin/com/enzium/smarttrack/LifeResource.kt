@@ -24,7 +24,10 @@ class LifeResource(
 
         try {
             val events = geminiService.parseInput(text)
+            var offset = 0L
             events.forEach { event ->
+                // Add a small millisecond offset to ensure each event has a unique Sort Key in DynamoDB
+                event.timestamp = event.timestamp + (offset++)
                 eventService.addEvent(event)
             }
             return Response.ok(events).build()
