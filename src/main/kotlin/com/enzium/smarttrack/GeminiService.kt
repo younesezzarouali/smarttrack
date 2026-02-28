@@ -31,23 +31,21 @@ class GeminiService(
     }
 
     fun generateBriefing(history: List<LifeEvent>): String {
+        log.info("Generating daily briefing...")
         if (apiKey == "NO_KEY" || apiKey.isBlank()) return "Configuration requise."
-        if (history.isEmpty()) return "Journée vierge. Prêt à optimiser ton temps et ton budget ?"
+        if (history.isEmpty()) return "Journée vierge. Quoi de neuf ?"
 
         val historyContext = history.joinToString("\n") { 
             "- [${it.type}] ${it.content} (${it.payload})" 
         }
         
         val prompt = """
-            Tu es un Coach de Performance et d'Optimisation Personnelle. Voici les événements de la journée de l'utilisateur :
+            Tu es un assistant Life OS ultra-minimaliste. Voici la journée :
             $historyContext
             
-            Ta mission : Faire un briefing ultra-percutant (2 lignes max) avec un ton de leader.
-            STRUCTURE :
-            1. Un constat factuel et chiffré (ex: "45€ dépensés, 2h de focus").
-            2. Une interprétation ou un conseil de coach (ex: "Attention à la dérive budgétaire" ou "Belle discipline sur le sport").
-            
-            SOIS HUMAIN : Utilise le 'tu'. Ne sois pas un robot. Cite au moins un objet précis.
+            Fais un résumé percutant en 15 mots maximum. 
+            Utilise des verbes d'action. 
+            Sois factuel sur les chiffres clés.
             Réponds uniquement en texte brut.
         """.trimIndent()
 
@@ -58,13 +56,17 @@ class GeminiService(
 
         return try {
             val response = executeWithRetry(3) { geminiApi.generateContent(apiKey, request) }
-            response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "C'est parti !"
+            val text = response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "C'est parti !"
+            log.infof("Briefing generated: %s", text)
+            text
         } catch (e: Exception) {
+            log.error("Failed to generate briefing", e)
             "Continue de noter ton activité."
         }
     }
 
     fun interact(userInput: String, history: List<LifeEvent>): GeminiInteractionResponse {
+        log.infof("Interacting with Gemini for input: %s", userInput)
         if (apiKey == "NO_KEY" || apiKey.isBlank()) throw RuntimeException("Gemini API Key is not configured")
 
         val historyContext = if (history.isEmpty()) "Aucun historique" 
@@ -107,6 +109,8 @@ class GeminiService(
         val jsonString = response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text
             ?: throw RuntimeException("AI returned an empty response")
         
+        log.infof("Gemini Raw Output: %s", jsonString)
+        
         return try {
             val node = mapper.readTree(jsonString)
             val intent = node.get("intent")?.asText() ?: "CAPTURE"
@@ -130,8 +134,11 @@ class GeminiService(
                 }
             } else null
 
-            GeminiInteractionResponse(intent, answer, events)
+            val result = GeminiInteractionResponse(intent, answer, events)
+            log.infof("Parsed result: intent=%s, eventsCount=%d", result.intent, result.events?.size ?: 0)
+            result
         } catch (e: Exception) {
+            log.error("Failed to parse AI output JSON", e)
             throw RuntimeException("Structural error in AI response", e)
         }
     }
