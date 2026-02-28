@@ -32,7 +32,6 @@ class LifeResource(
     @Blocking
     fun getBriefing(@QueryParam("timezoneOffset") offsetMinutes: Int?): Map<String, String> {
         val now = Instant.now()
-        
         val calendar = Calendar.getInstance()
         calendar.timeInMillis = now.toEpochMilli()
         if (offsetMinutes != null) {
@@ -41,12 +40,9 @@ class LifeResource(
         calendar.set(Calendar.HOUR_OF_DAY, 0)
         calendar.set(Calendar.MINUTE, 0)
         calendar.set(Calendar.SECOND, 0)
-        
         val startOfDay = calendar.timeInMillis
 
         val todayEvents = eventService.listAll().filter { it.timestamp >= startOfDay }
-        log.infof("Generating briefing for %d events since %d", todayEvents.size, startOfDay)
-        
         val summary = geminiService.generateBriefing(todayEvents)
         return mapOf("briefing" to summary)
     }
@@ -65,6 +61,15 @@ class LifeResource(
     fun update(event: LifeEvent): Response {
         eventService.updateEvent(event)
         return Response.ok(event).build()
+    }
+
+    @DELETE
+    @Path("/events/{timestamp}")
+    @Blocking
+    fun delete(@PathParam("timestamp") timestamp: Long): Response {
+        log.infof("Deleting event at %d", timestamp)
+        eventService.deleteEvent(timestamp)
+        return Response.noContent().build()
     }
 
     @GET
