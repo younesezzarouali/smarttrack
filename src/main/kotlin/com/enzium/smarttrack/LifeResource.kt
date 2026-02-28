@@ -21,8 +21,8 @@ class LifeResource(
     fun magic(input: Map<String, String>): Response {
         val text = input["text"] ?: throw BadRequestException("Input text is required")
         
-        // 1. Fetch recent history to give context to Gemini
-        val history = eventService.listAll()
+        // 1. Fetch only the 50 most recent events to limit token usage and costs
+        val history = eventService.listAll(limit = 50)
         
         // 2. Interact with AI
         val result = geminiService.interact(text, history)

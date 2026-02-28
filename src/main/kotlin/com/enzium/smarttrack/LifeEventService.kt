@@ -43,26 +43,32 @@ class LifeEventService(
         }
     }
 
-    fun listAll(userId: String = "default-user"): List<LifeEvent> {
-        val request = QueryRequest.builder()
+    fun listAll(userId: String = "default-user", limit: Int? = null): List<LifeEvent> {
+        val builder = QueryRequest.builder()
             .tableName(tableName)
             .keyConditionExpression("userId = :v_userId")
             .expressionAttributeValues(mapOf(":v_userId" to userId.toAV()))
-            .build()
+            .scanIndexForward(false) // Recent first
+
+        if (limit != null) {
+            builder.limit(limit)
+        }
 
         return try {
-            dynamoDbClient.query(request).items().map { item ->
-                LifeEvent().apply {
-                    this.userId = item["userId"]?.s() ?: ""
-                    this.timestamp = item["timestamp"]?.n()?.toLong() ?: 0L
-                    this.type = item["type"]?.s() ?: "NOTE"
-                    this.content = item["content"]?.s() ?: ""
-                    this.payload = item["payload"]?.m()?.mapValues { it.value.s() } ?: emptyMap()
-                }
+            dynamoDbClient.query(builder.build()).items().map { item ->
+                mapToLifeEvent(item)
             }
         } catch (e: Exception) {
             emptyList()
         }
+    }
+
+    private fun mapToLifeEvent(item: Map<String, AttributeValue>) = LifeEvent().apply {
+        userId = item["userId"]?.s() ?: ""
+        timestamp = item["timestamp"]?.n()?.toLong() ?: 0L
+        type = item["type"]?.s() ?: "NOTE"
+        content = item["content"]?.s() ?: ""
+        payload = item["payload"]?.m()?.mapValues { it.value.s() } ?: emptyMap()
     }
 
     fun clearAll(userId: String = "default-user") {
