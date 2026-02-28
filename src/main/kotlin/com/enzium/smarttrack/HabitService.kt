@@ -60,24 +60,47 @@ class HabitService(
         val sinceTs = Instant.now().minus(24, ChronoUnit.HOURS).toEpochMilli()
         val recentEvents = eventService.listAll(userId, sinceTimestamp = sinceTs)
 
-        log.infof("Syncing %d habits with %d events (STRICT LINKING)", habits.size, recentEvents.size)
+        log.infof("Syncing %d habits with %d events. Window since: %d", habits.size, recentEvents.size, sinceTs)
 
         val progressMap = mutableMapOf<String, Double>()
         val newlyCompleted = mutableListOf<String>()
 
         habits.forEach { habit ->
-            val totalValue = recentEvents.filter { 
-                // CRITICAL FIX: Only match if habitId matches OR if it's a very strong name match with no conflicting ID
-                val linkedId = it.payload["linkedHabitId"]
-                val matchesExplicitly = linkedId == habit.id
-                val matchesByTitle = linkedId == null && it.content.contains(habit.name, ignoreCase = true)
+            log.infof("--- Analyzing habit: %s (%s) ---", habit.name, habit.id)
+            
+            val matchingEvents = recentEvents.filter { event ->
+                val linkedId = event.payload["linkedHabitId"]
                 
-                (matchesExplicitly || matchesByTitle) && (it.payload.containsKey("duration_min") || it.payload.containsKey("value"))
-            }.sumOf { 
+                // 1. Explicit link (Strongest)
+                if (linkedId != null) {
+                    val isMatch = linkedId == habit.id
+                    if (isMatch) log.infof("  Match by ID: %s", event.content)
+                    isMatch
+                } 
+                // 2. Semantic name match (Only if NO other habit is linked)
+                else {
+                    val isMatch = event.content.contains(habit.name, ignoreCase = true) || 
+                                 habit.name.contains(event.content, ignoreCase = true)
+                    
+                    // Extra safety: only match by name if the event isn't potentially for another active habit
+                    val isPotentiallyConflicting = habits.any { other -> 
+                        other.id != habit.id && event.content.contains(other.name, ignoreCase = true) 
+                    }
+                    
+                    if (isMatch && !isPotentiallyConflicting) {
+                        log.infof("  Match by Name (Safe): %s", event.content)
+                        true
+                    } else false
+                }
+            }.filter { it.payload.containsKey("duration_min") || it.payload.containsKey("value") }
+
+            val totalValue = matchingEvents.sumOf { 
                 it.payload["duration_min"]?.toDoubleOrNull() ?: it.payload["value"]?.toDoubleOrNull() ?: 0.0 
             }
             
+            log.infof("  Final progress for %s: %.1f", habit.name, totalValue)
             progressMap[habit.id] = totalValue
+            
             if (totalValue >= habit.targetValue) {
                 newlyCompleted.add(habit.id)
                 updateStreak(habit, todayStr)
