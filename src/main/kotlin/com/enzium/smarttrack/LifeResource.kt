@@ -26,7 +26,6 @@ class LifeResource(
             val events = geminiService.parseInput(text)
             var offset = 0L
             events.forEach { event ->
-                // Add a small millisecond offset to ensure each event has a unique Sort Key in DynamoDB
                 event.timestamp = event.timestamp + (offset++)
                 eventService.addEvent(event)
             }
@@ -42,5 +41,14 @@ class LifeResource(
     @Blocking
     fun list(): List<LifeEvent> {
         return eventService.listAll()
+    }
+
+    @DELETE
+    @Path("/events")
+    @Blocking
+    fun clear(): Response {
+        log.info("Request to clear all events")
+        eventService.clearAll()
+        return Response.noContent().build()
     }
 }
