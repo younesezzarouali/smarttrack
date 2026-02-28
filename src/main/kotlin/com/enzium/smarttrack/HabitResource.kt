@@ -21,6 +21,13 @@ class HabitResource(
         return repository.getActiveHabits("default-user")
     }
 
+    @GET
+    @Path("/progress/daily")
+    @Blocking
+    fun getDailyProgress(): HabitProgress {
+        return habitService.getDailyProgress("default-user") ?: HabitProgress(userId = "default-user", date = "", progressMap = emptyMap(), completedIds = emptyList())
+    }
+
     @POST
     @Blocking
     fun create(request: HabitCreationIntent): Response {

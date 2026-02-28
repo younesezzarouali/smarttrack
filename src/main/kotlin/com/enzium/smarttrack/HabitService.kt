@@ -55,33 +55,39 @@ class HabitService(
     fun syncDailyProgress(userId: String = "default-user") {
         val todayStr = LocalDate.now().format(DateTimeFormatter.ISO_DATE)
         val habits = getHabits(userId)
-        if (habits.isEmpty()) return
+        if (habits.isEmpty()) {
+            log.info("No active habits found for sync.")
+            return
+        }
 
-        // Search for all events in the last 24 hours to be safe with timezones
+        // Search for all events in the last 24 hours
         val sinceTs = Instant.now().minus(24, ChronoUnit.HOURS).toEpochMilli()
         val recentEvents = eventService.listAll(userId, sinceTimestamp = sinceTs)
 
-        log.infof("Syncing %d habits with %d recent events", habits.size, recentEvents.size)
+        log.infof("Syncing %d habits with %d recent events (since ts: %d)", habits.size, recentEvents.size, sinceTs)
 
         val progressMap = mutableMapOf<String, Double>()
         val newlyCompleted = mutableListOf<String>()
 
         habits.forEach { habit ->
-            val totalValue = when (habit.type) {
-                "TIME" -> recentEvents.filter { 
-                    (it.type.equals(habit.category, ignoreCase = true) || it.content.contains(habit.name, ignoreCase = true)) 
-                    && it.payload.containsKey("duration_min") 
-                }.sumOf { it.payload["duration_min"]?.toDouble() ?: 0.0 }
+            log.debugf("Processing habit: %s (id: %s, category: %s)", habit.name, habit.id, habit.category)
+            val matchingEvents = recentEvents.filter { 
+                val matchesType = it.type.equals(habit.category, ignoreCase = true)
+                val matchesName = it.content.contains(habit.name, ignoreCase = true) || 
+                                 habit.name.contains(it.content, ignoreCase = true)
                 
-                "COUNT" -> recentEvents.filter { 
-                    (it.type.equals(habit.category, ignoreCase = true) || it.content.contains(habit.name, ignoreCase = true))
-                    && it.payload.containsKey("value") 
-                }.sumOf { it.payload["value"]?.toDouble() ?: 0.0 }
-                
-                else -> 0.0
+                (matchesType || matchesName) && (it.payload.containsKey("duration_min") || it.payload.containsKey("value"))
+            }
+            
+            log.infof("Found %d matching events for habit %s", matchingEvents.size, habit.name)
+
+            val totalValue = matchingEvents.sumOf { 
+                it.payload["duration_min"]?.toDoubleOrNull() ?: it.payload["value"]?.toDoubleOrNull() ?: 0.0 
             }
             
             progressMap[habit.id] = totalValue
+            log.infof("Total progress for %s: %.1f", habit.name, totalValue)
+
             if (totalValue >= habit.targetValue) {
                 newlyCompleted.add(habit.id)
                 updateStreak(habit, todayStr)
