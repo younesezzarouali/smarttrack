@@ -36,7 +36,7 @@ class GeminiService(
         if (apiKey == "NO_KEY" || apiKey.isBlank()) throw RuntimeException("Gemini API Key missing")
 
         val habitsContext = if (habits.isEmpty()) "Aucune habitude configurée"
-            else habits.joinToString("\n") { "- ID: ${it.id}, Name: ${it.name}, Category: ${it.category}, Target: ${it.targetValue} ${it.unit}" }
+            else habits.joinToString("\n") { "- ID: ${it.id}, Name: ${it.name}, Category: ${it.category}" }
 
         val historyContext = if (history.isEmpty()) "Aucun historique" 
             else history.take(20).joinToString("\n") { "- [${it.type}] ${it.content}" }
@@ -54,37 +54,6 @@ class GeminiService(
         return executeWithRetry(3) {
             val response = geminiApi.generateContent(apiKey, request)
             parseInteractionResponse(response, habits)
-        }
-    }
-
-    fun generateBriefing(history: List<LifeEvent>): String {
-        if (apiKey == "NO_KEY" || apiKey.isBlank()) return "Configuration requise."
-        if (history.isEmpty()) return "Journée vierge. Prêt à optimiser ton temps et ton budget ?"
-
-        val historyContext = history.joinToString("\n") { 
-            "- [${it.type}] ${it.content} (${it.payload})" 
-        }
-        
-        val prompt = """
-            Tu es un assistant Life OS ultra-minimaliste. Voici les événements de la journée :
-            $historyContext
-            
-            Fais un résumé percutant en 15 mots maximum. 
-            Utilise des verbes d'action. 
-            Sois factuel sur les chiffres clés.
-            Réponds uniquement en texte brut.
-        """.trimIndent()
-
-        val request = GeminiRequest(
-            contents = listOf(Content(role = "user", parts = listOf(Part(text = prompt)))),
-            generationConfig = GenerationConfig(response_mime_type = "text/plain")
-        )
-
-        return try {
-            val response = executeWithRetry(3) { geminiApi.generateContent(apiKey, request) }
-            response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "C'est parti !"
-        } catch (e: Exception) {
-            "Continue de noter ton activité."
         }
     }
 
@@ -110,13 +79,30 @@ class GeminiService(
         val jsonString = response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text
             ?: throw RuntimeException("Empty AI response")
         
-        log.infof("Raw AI JSON: %s", jsonString)
-
         return try {
             val node = mapper.readTree(jsonString)
             val intent = node.get("intent")?.asText() ?: "CAPTURE"
             val dailyInsight = node.get("dailyInsight")?.asText()
             
+            val habitUpdates = mutableListOf<HabitUpdateIntent>()
+            node.get("habitUpdates")?.let { updatesNode ->
+                if (updatesNode.isArray) {
+                    updatesNode.mapTo(habitUpdates) { updateNode ->
+                        val hName = updateNode.get("habitName")?.asText()
+                        val hId = updateNode.get("habitId")?.asText()
+                        // Resolve ID if AI only gave name
+                        val resolvedId = hId ?: habits.find { it.name.contains(hName ?: "---", ignoreCase = true) }?.id
+                        
+                        HabitUpdateIntent(
+                            habitId = resolvedId,
+                            habitName = hName,
+                            progressDelta = updateNode.get("progressDelta")?.asDouble() ?: 0.0,
+                            confidence = updateNode.get("confidence")?.asDouble() ?: 1.0
+                        )
+                    }
+                }
+            }
+
             val events = mutableListOf<LifeEvent>()
             node.get("events")?.let { eventsNode ->
                 if (eventsNode.isArray) {
@@ -125,42 +111,33 @@ class GeminiService(
                             userId = "default-user"
                             type = eventNode.get("type")?.asText() ?: "NOTE"
                             content = eventNode.get("content")?.asText() ?: ""
-                            payload = eventNode.get("payload")?.let { payloadNode ->
-                                val payloadMap = mutableMapOf<String, String>()
-                                payloadNode.fields().forEach { payloadMap[it.key] = it.value.asText() }
-                                payloadMap
-                            } ?: emptyMap()
+                            val pMap = mutableMapOf<String, String>()
+                            eventNode.get("payload")?.fields()?.forEach { pMap[it.key] = it.value.asText() }
+                            
+                            // LINKING LOGIC: If this event matches a habit update, tag it with habitId
+                            val matchingUpdate = habitUpdates.find { content.contains(it.habitName ?: "---", ignoreCase = true) }
+                            if (matchingUpdate?.habitId != null) {
+                                pMap["linkedHabitId"] = matchingUpdate.habitId
+                            }
+                            
+                            payload = pMap
                         }
                     }
                 }
             }
 
-            val habitUpdates = mutableListOf<HabitUpdateIntent>()
-            node.get("habitUpdates")?.let { updatesNode ->
-                if (updatesNode.isArray) {
-                    updatesNode.mapTo(habitUpdates) { updateNode ->
-                        HabitUpdateIntent(
-                            habitId = updateNode.get("habitId")?.asText(),
-                            habitName = updateNode.get("habitName")?.asText(),
-                            progressDelta = updateNode.get("progressDelta")?.asDouble() ?: 0.0,
-                            confidence = updateNode.get("confidence")?.asDouble() ?: 1.0
-                        )
-                    }
-                }
-            }
-
-            // CRITICAL FALLBACK: If AI returned a habit update but NO event, create the event
+            // Fallback synthesis
             habitUpdates.forEach { update ->
-                val alreadyHasEvent = events.any { it.content.contains(update.habitName ?: "", ignoreCase = true) }
-                if (!alreadyHasEvent && update.progressDelta > 0) {
-                    log.info("Synthesizing missing event for habit update: ${update.habitName}")
-                    val habit = habits.find { it.name.equals(update.habitName, ignoreCase = true) || it.id == update.habitId }
+                val alreadyLinked = events.any { it.payload["linkedHabitId"] == update.habitId }
+                if (!alreadyLinked && update.progressDelta > 0 && update.habitId != null) {
+                    val habit = habits.find { it.id == update.habitId }
                     events.add(LifeEvent().apply {
                         userId = "default-user"
                         type = habit?.category ?: "HEALTH"
-                        content = update.habitName ?: "Activity"
+                        content = habit?.name ?: "Activity"
                         payload = mapOf(
                             "duration_min" to update.progressDelta.toString(),
+                            "linkedHabitId" to update.habitId,
                             "sentiment" to "POSITIVE"
                         )
                     })
@@ -172,5 +149,9 @@ class GeminiService(
             log.error("Failed to parse AI JSON", e)
             throw RuntimeException("AI format error")
         }
+    }
+
+    fun generateBriefing(history: List<LifeEvent>): String {
+        return "Calculated in interaction."
     }
 }
