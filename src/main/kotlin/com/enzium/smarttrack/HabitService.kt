@@ -36,9 +36,9 @@ class HabitService(
                     name = item["name"]?.s() ?: "",
                     type = item["type"]?.s() ?: "TIME",
                     targetValue = item["targetValue"]?.n()?.toDouble() ?: 0.0,
-                    unit = item["unit"]?.s() ?: "",
+                    unit = item["unit"]?.s() ?: "min",
                     frequency = item["frequency"]?.s() ?: "DAILY",
-                    category = item["category"]?.s() ?: "HEALTH",
+                    category = item["category"]?.s() ?: "LIFE",
                     streak = item["streak"]?.n()?.toInt() ?: 0,
                     lastCompletedDate = item["lastCompletedDate"]?.s() ?: "",
                     active = item["active"]?.bool() ?: true
@@ -55,22 +55,34 @@ class HabitService(
         val habits = getHabits(userId).filter { it.active }
         if (habits.isEmpty()) return
 
-        val startOfDay = LocalDate.now().atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        // Get events from today (UTC)
+        val startOfDay = LocalDate.now().atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
         val todayEvents = eventService.listAll(userId, sinceTimestamp = startOfDay)
+
+        log.infof("Syncing %d habits with %d today events", habits.size, todayEvents.size)
 
         val progressMap = mutableMapOf<String, Double>()
         val newlyCompleted = mutableListOf<String>()
 
         habits.forEach { habit ->
+            // SMART MATCHING: by Category OR by Name keyword
             val totalValue = when (habit.type) {
-                "TIME" -> todayEvents.filter { it.type == habit.category && it.payload.containsKey("duration_min") }
-                                     .sumOf { it.payload["duration_min"]?.toDouble() ?: 0.0 }
-                "COUNT" -> todayEvents.filter { it.type == habit.category && it.payload.containsKey("value") }
-                                      .sumOf { it.payload["value"]?.toDouble() ?: 0.0 }
+                "TIME" -> todayEvents.filter { 
+                    (it.type.equals(habit.category, ignoreCase = true) || it.content.contains(habit.name, ignoreCase = true)) 
+                    && it.payload.containsKey("duration_min") 
+                }.sumOf { it.payload["duration_min"]?.toDouble() ?: 0.0 }
+                
+                "COUNT" -> todayEvents.filter { 
+                    (it.type.equals(habit.category, ignoreCase = true) || it.content.contains(habit.name, ignoreCase = true))
+                    && it.payload.containsKey("value") 
+                }.sumOf { it.payload["value"]?.toDouble() ?: 0.0 }
+                
                 else -> 0.0
             }
             
+            log.infof("Habit '%s' progress: %.1f / %.1f", habit.name, totalValue, habit.targetValue)
             progressMap[habit.id] = totalValue
+            
             if (totalValue >= habit.targetValue) {
                 newlyCompleted.add(habit.id)
                 updateStreak(habit, today)
@@ -137,28 +149,6 @@ class HabitService(
     }
 
     fun setupDefaultHabits(userId: String = "default-user") {
-        val existing = getHabits(userId)
-        if (existing.isNotEmpty()) return
-
-        val defaults = listOf(
-            Habit(id = "h1", userId = userId, name = "Daily Sport", type = "TIME", targetValue = 15.0, unit = "min", category = "HEALTH"),
-            Habit(id = "h2", userId = userId, name = "Deep Work", type = "TIME", targetValue = 60.0, unit = "min", category = "WORK")
-        )
-
-        defaults.forEach { habit ->
-            val item = mutableMapOf<String, AttributeValue>()
-            item["pk"] = "USER#$userId".toAV()
-            item["sk"] = "HABIT#${habit.id}".toAV()
-            item["name"] = habit.name.toAV()
-            item["type"] = habit.type.toAV()
-            item["targetValue"] = habit.targetValue.toAV()
-            item["unit"] = habit.unit.toAV()
-            item["frequency"] = habit.frequency.toAV()
-            item["category"] = habit.category.toAV()
-            item["streak"] = 0.0.toAV()
-            item["lastCompletedDate"] = "".toAV()
-            item["active"] = AttributeValue.builder().bool(true).build()
-            dynamoDbClient.putItem(PutItemRequest.builder().tableName(tableName).item(item).build())
-        }
+        // Obsolete with manual creation modal, but keeping for first-run logic
     }
 }
