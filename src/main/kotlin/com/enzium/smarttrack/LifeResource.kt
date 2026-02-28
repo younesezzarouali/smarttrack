@@ -6,6 +6,7 @@ import jakarta.ws.rs.core.Response
 import jakarta.ws.rs.core.MediaType
 import org.jboss.logging.Logger
 import java.util.*
+import java.time.Instant
 
 @Path("/life")
 @Produces(MediaType.APPLICATION_JSON)
@@ -29,15 +30,23 @@ class LifeResource(
     @GET
     @Path("/briefing")
     @Blocking
-    fun getBriefing(): Map<String, String> {
-        // Fetch events for "Today"
+    fun getBriefing(@QueryParam("timezoneOffset") offsetMinutes: Int?): Map<String, String> {
+        val now = Instant.now()
+        
         val calendar = Calendar.getInstance()
+        calendar.timeInMillis = now.toEpochMilli()
+        if (offsetMinutes != null) {
+            calendar.add(Calendar.MINUTE, -offsetMinutes)
+        }
         calendar.set(Calendar.HOUR_OF_DAY, 0)
         calendar.set(Calendar.MINUTE, 0)
         calendar.set(Calendar.SECOND, 0)
+        
         val startOfDay = calendar.timeInMillis
 
         val todayEvents = eventService.listAll().filter { it.timestamp >= startOfDay }
+        log.infof("Generating briefing for %d events since %d", todayEvents.size, startOfDay)
+        
         val summary = geminiService.generateBriefing(todayEvents)
         return mapOf("briefing" to summary)
     }

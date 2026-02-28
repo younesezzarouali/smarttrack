@@ -32,17 +32,20 @@ class GeminiService(
 
     fun generateBriefing(history: List<LifeEvent>): String {
         if (apiKey == "NO_KEY" || apiKey.isBlank()) return "Assistant configuration incomplete."
-        if (history.isEmpty()) return "Welcome! Start by recording your first activity or expense today."
+        if (history.isEmpty()) return "Rien de noté pour aujourd'hui ! Dis-moi ce qui t'arrive pour commencer."
 
-        val historyContext = history.joinToString("\n") { "- [${it.type}] ${it.content}" }
+        val historyContext = history.joinToString("\n") { 
+            "- [${it.type}] ${it.content} (Details: ${it.payload})" 
+        }
         
         val prompt = """
-            Tu es un assistant Life OS. Voici les événements de la journée de l'utilisateur :
+            Tu es un assistant Life OS percutant et factuel. Voici les événements de la journée :
             $historyContext
             
-            Fais un résumé très court (3 lignes max), motivant et humain de sa journée. 
-            Utilise le 'tu'. Sois percutant.
-            Réponds uniquement en texte brut, pas de JSON ici.
+            Fais un résumé TRÈS COURT (2 lignes max). 
+            RÈGLE : Tu DOIS citer au moins un élément concret (nom d'item, montant ou durée) présent dans la liste.
+            Sois motivant mais évite les phrases génériques comme "Tu as géré tes finances". Dis plutôt "Tu as dépensé X€ pour Y".
+            Réponds uniquement en texte brut.
         """.trimIndent()
 
         val request = GeminiRequest(
@@ -52,9 +55,9 @@ class GeminiService(
 
         return try {
             val response = executeWithRetry(3) { geminiApi.generateContent(apiKey, request) }
-            response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "Good day! Keep track of your progress."
+            response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "Prêt pour la suite !"
         } catch (e: Exception) {
-            "Ready to help you track your day!"
+            "Continue de noter tes activités pour un résumé complet."
         }
     }
 
