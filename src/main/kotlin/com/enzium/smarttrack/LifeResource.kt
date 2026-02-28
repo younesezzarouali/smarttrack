@@ -27,9 +27,18 @@ class LifeResource(
             eventService.addEvents(events)
             Response.ok(events).build()
         } catch (e: Exception) {
-            log.error("Parsing or persistence failed", e)
+            log.error("AI Error", e)
             Response.status(500).entity(mapOf("error" to e.message)).build()
         }
+    }
+
+    @PUT
+    @Path("/events")
+    @Blocking
+    fun update(event: LifeEvent): Response {
+        log.infof("Updating event: %d", event.timestamp)
+        eventService.updateEvent(event)
+        return Response.ok(event).build()
     }
 
     @GET
