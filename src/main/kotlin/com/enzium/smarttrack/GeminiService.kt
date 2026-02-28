@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.core.type.TypeReference
 import java.io.InputStream
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.TimeUnit
 
 @ApplicationScoped
 class GeminiService(
@@ -33,13 +34,28 @@ class GeminiService(
             generationConfig = GenerationConfig(response_mime_type = "application/json")
         )
 
-        val response = try {
-            geminiApi.generateContent(apiKey, request)
-        } catch (e: Exception) {
-            log.error("Failed to call Gemini API", e)
-            throw RuntimeException("AI processing failed", e)
+        // Tentative d'appel avec un petit mécanisme de retry pour l'erreur 429
+        var lastException: Exception? = null
+        for (i in 1..3) {
+            try {
+                val response = geminiApi.generateContent(apiKey, request)
+                return processResponse(response)
+            } catch (e: Exception) {
+                lastException = e
+                if (e.message?.contains("429") == true) {
+                    log.warnf("Gemini API rate limited (429). Retrying in 2s... (Attempt %d/3)", i)
+                    TimeUnit.SECONDS.sleep(2)
+                    continue
+                }
+                break
+            }
         }
+        
+        log.error("AI processing failed after retries", lastException)
+        throw RuntimeException("AI temporarily unavailable, please try again in a moment", lastException)
+    }
 
+    private fun processResponse(response: GeminiResponse): List<LifeEvent> {
         val jsonString = response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text
             ?: throw RuntimeException("No response from AI")
         
