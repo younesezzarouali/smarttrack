@@ -13,24 +13,26 @@ class HabitService(
     private val eventService: LifeEventService
 ) {
     private val log: Logger = Logger.getLogger(HabitService::class.java)
-    private val habitsTable = "Habits"
-    private val progressTable = "HabitProgress"
+    private val tableName = "SmartTrack"
 
     private fun String.toAV(): AttributeValue = AttributeValue.builder().s(this).build()
     private fun Double.toAV(): AttributeValue = AttributeValue.builder().n(this.toString()).build()
 
     fun getHabits(userId: String = "default-user"): List<Habit> {
         val request = QueryRequest.builder()
-            .tableName(habitsTable)
-            .keyConditionExpression("userId = :v_userId")
-            .expressionAttributeValues(mapOf(":v_userId" to userId.toAV()))
+            .tableName(tableName)
+            .keyConditionExpression("pk = :pk AND begins_with(sk, :sk)")
+            .expressionAttributeValues(mapOf(
+                ":pk" to "USER#$userId".toAV(),
+                ":sk" to "HABIT#".toAV()
+            ))
             .build()
 
         return try {
             dynamoDbClient.query(request).items().map { item ->
                 Habit(
-                    id = item["habitId"]?.s() ?: "",
-                    userId = item["userId"]?.s() ?: "default-user",
+                    id = item["sk"]?.s()?.removePrefix("HABIT#") ?: "",
+                    userId = userId,
                     name = item["name"]?.s() ?: "",
                     type = item["type"]?.s() ?: "TIME",
                     targetValue = item["targetValue"]?.n()?.toDouble() ?: 0.0,
@@ -89,8 +91,8 @@ class HabitService(
         habit.lastCompletedDate = today
         
         val item = mutableMapOf<String, AttributeValue>()
-        item["userId"] = habit.userId.toAV()
-        item["habitId"] = habit.id.toAV()
+        item["pk"] = "USER#${habit.userId}".toAV()
+        item["sk"] = "HABIT#${habit.id}".toAV()
         item["name"] = habit.name.toAV()
         item["type"] = habit.type.toAV()
         item["targetValue"] = habit.targetValue.toAV()
@@ -101,31 +103,31 @@ class HabitService(
         item["lastCompletedDate"] = habit.lastCompletedDate.toAV()
         item["active"] = AttributeValue.builder().bool(habit.active).build()
 
-        dynamoDbClient.putItem(PutItemRequest.builder().tableName(habitsTable).item(item).build())
+        dynamoDbClient.putItem(PutItemRequest.builder().tableName(tableName).item(item).build())
     }
 
     private fun saveProgress(userId: String, date: String, progress: Map<String, Double>, completed: List<String>) {
         val items = mutableMapOf<String, AttributeValue>()
-        items["userId"] = userId.toAV()
-        items["date"] = date.toAV()
+        items["pk"] = "USER#$userId".toAV()
+        items["sk"] = "SNAP#$date".toAV()
         items["progressMap"] = AttributeValue.builder().m(progress.mapValues { it.value.toAV() }).build()
         items["completedIds"] = AttributeValue.builder().ss(completed.ifEmpty { listOf("NONE") }).build()
 
-        dynamoDbClient.putItem(PutItemRequest.builder().tableName(progressTable).item(items).build())
+        dynamoDbClient.putItem(PutItemRequest.builder().tableName(tableName).item(items).build())
     }
 
     fun getDailyProgress(userId: String = "default-user"): HabitProgress? {
         val today = LocalDate.now().format(DateTimeFormatter.ISO_DATE)
-        val key = mapOf("userId" to userId.toAV(), "date" to today.toAV())
+        val key = mapOf("pk" to "USER#$userId".toAV(), "sk" to "SNAP#$today".toAV())
         
         return try {
-            val response = dynamoDbClient.getItem(GetItemRequest.builder().tableName(progressTable).key(key).build())
+            val response = dynamoDbClient.getItem(GetItemRequest.builder().tableName(tableName).key(key).build())
             if (!response.hasItem()) return null
             
             val item = response.item()
             HabitProgress(
-                userId = item["userId"]?.s() ?: "default-user",
-                date = item["date"]?.s() ?: "",
+                userId = userId,
+                date = today,
                 progressMap = item["progressMap"]?.m()?.mapValues { it.value.n().toDouble() } ?: emptyMap(),
                 completedIds = item["completedIds"]?.ss()?.filter { it != "NONE" } ?: emptyList()
             )
@@ -145,8 +147,8 @@ class HabitService(
 
         defaults.forEach { habit ->
             val item = mutableMapOf<String, AttributeValue>()
-            item["userId"] = habit.userId.toAV()
-            item["habitId"] = habit.id.toAV()
+            item["pk"] = "USER#$userId".toAV()
+            item["sk"] = "HABIT#${habit.id}".toAV()
             item["name"] = habit.name.toAV()
             item["type"] = habit.type.toAV()
             item["targetValue"] = habit.targetValue.toAV()
@@ -156,7 +158,7 @@ class HabitService(
             item["streak"] = 0.0.toAV()
             item["lastCompletedDate"] = "".toAV()
             item["active"] = AttributeValue.builder().bool(true).build()
-            dynamoDbClient.putItem(PutItemRequest.builder().tableName(habitsTable).item(item).build())
+            dynamoDbClient.putItem(PutItemRequest.builder().tableName(tableName).item(item).build())
         }
     }
 }

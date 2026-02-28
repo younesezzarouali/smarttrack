@@ -23,8 +23,11 @@ class LifeResource(
     @Blocking
     fun magic(input: Map<String, String>): Response {
         val text = input["text"] ?: throw BadRequestException("Input text required")
+        log.infof("AI Interaction request: %s", text)
+        
         val history = eventService.listAll(limit = 20)
         val activeHabits = habitService.getHabits()
+        
         val result = geminiService.interact(text, history, activeHabits)
         return Response.ok(result).build()
     }
@@ -33,6 +36,7 @@ class LifeResource(
     @Path("/events/batch")
     @Blocking
     fun saveBatch(events: List<LifeEvent>): Response {
+        log.infof("Committing batch of %d events", events.size)
         eventService.addEvents(events)
         habitService.syncDailyProgress()
         return Response.status(Response.Status.CREATED).build()
@@ -42,13 +46,17 @@ class LifeResource(
     @Path("/briefing")
     @Blocking
     fun getBriefing(@QueryParam("timezoneOffset") offsetMinutes: Int?): Map<String, String> {
+        val now = Instant.now()
         val calendar = Calendar.getInstance()
+        calendar.timeInMillis = now.toEpochMilli()
         if (offsetMinutes != null) calendar.add(Calendar.MINUTE, -offsetMinutes)
         calendar.set(Calendar.HOUR_OF_DAY, 0)
         calendar.set(Calendar.MINUTE, 0)
         calendar.set(Calendar.SECOND, 0)
         
-        val todayEvents = eventService.listAll(sinceTimestamp = calendar.timeInMillis)
+        val startOfDay = calendar.timeInMillis
+        val todayEvents = eventService.listAll(sinceTimestamp = startOfDay)
+        
         val summary = geminiService.generateBriefing(todayEvents)
         return mapOf("briefing" to summary)
     }
@@ -57,7 +65,8 @@ class LifeResource(
     @Path("/events")
     @Blocking
     fun update(event: LifeEvent): Response {
-        eventService.saveToDb(event) // Updated reference
+        log.infof("Updating existing event: %s", event.content)
+        eventService.saveToDb(event)
         habitService.syncDailyProgress()
         return Response.ok(event).build()
     }
@@ -67,6 +76,15 @@ class LifeResource(
     @Blocking
     fun list(): List<LifeEvent> {
         return eventService.listAll(limit = 100)
+    }
+
+    @DELETE
+    @Path("/events/{timestamp}")
+    @Blocking
+    fun delete(@PathParam("timestamp") timestamp: Long): Response {
+        eventService.deleteEvent(timestamp)
+        habitService.syncDailyProgress()
+        return Response.noContent().build()
     }
 
     @DELETE
