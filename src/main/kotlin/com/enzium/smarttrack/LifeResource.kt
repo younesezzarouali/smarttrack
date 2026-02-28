@@ -23,14 +23,9 @@ class LifeResource(
     @Blocking
     fun magic(input: Map<String, String>): Response {
         val text = input["text"] ?: throw BadRequestException("Input text required")
-        
-        // 1. Get Context (Recent History + Active Habits)
         val history = eventService.listAll(limit = 20)
         val activeHabits = habitService.getHabits()
-        
-        // 2. IA analysis with full context
         val result = geminiService.interact(text, history, activeHabits)
-        
         return Response.ok(result).build()
     }
 
@@ -62,7 +57,7 @@ class LifeResource(
     @Path("/events")
     @Blocking
     fun update(event: LifeEvent): Response {
-        eventService.updateEvent(event)
+        eventService.saveToDb(event) // Updated reference
         habitService.syncDailyProgress()
         return Response.ok(event).build()
     }
