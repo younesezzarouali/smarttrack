@@ -52,18 +52,52 @@ class HabitService(
         }
     }
 
-    /**
-     * Re-calculates and OVERWRITES today's snapshot based on current events.
-     */
+    fun getWeeklySummary(userId: String = "default-user"): WeeklySummary {
+        val habits = getHabits(userId)
+        val today = LocalDate.now()
+        val days = mutableListOf<DaySummary>()
+        var totalCompleted = 0
+        var totalPossible = 0
+
+        for (i in 6 downTo 0) {
+            val date = today.minusDays(i.toLong())
+            val dateStr = date.format(DateTimeFormatter.ISO_DATE)
+            // Use 3 letters for clarity: Mon, Tue...
+            val label = date.dayOfWeek.name.take(3).lowercase().replaceFirstChar { it.uppercase() }
+            
+            val snapshot = getSnapshotForDate(userId, dateStr)
+            val completedCount = snapshot?.completedIds?.filter { it != "NONE" }?.size ?: 0
+            
+            val ratio = if (habits.isNotEmpty()) completedCount.toDouble() / habits.size else 0.0
+            days.add(DaySummary(dateStr, label, ratio))
+            
+            totalCompleted += completedCount
+            totalPossible += habits.size
+        }
+
+        return WeeklySummary(days, "$totalCompleted/$totalPossible")
+    }
+
+    private fun getSnapshotForDate(userId: String, date: String): HabitProgress? {
+        val key = mapOf("pk" to "USER#$userId".toAV(), "sk" to "SNAP#$date".toAV())
+        return try {
+            val response = dynamoDbClient.getItem(GetItemRequest.builder().tableName(tableName).key(key).build())
+            if (!response.hasItem()) return null
+            val item = response.item()
+            HabitProgress(
+                userId = userId, date = date,
+                progressMap = item["progressMap"]?.m()?.mapValues { it.value.n().toDouble() } ?: emptyMap(),
+                completedIds = item["completedIds"]?.ss()?.filter { it != "NONE" } ?: emptyList()
+            )
+        } catch (e: Exception) { null }
+    }
+
     fun syncDailyProgress(userId: String = "default-user") {
         val todayStr = LocalDate.now().format(DateTimeFormatter.ISO_DATE)
         val habits = getHabits(userId)
         
-        // Search for all events in the last 24 hours
         val sinceTs = Instant.now().minus(24, ChronoUnit.HOURS).toEpochMilli()
         val recentEvents = eventService.listAll(userId, sinceTimestamp = sinceTs)
-
-        log.infof("Full Sync for %s: %d habits vs %d events", userId, habits.size, recentEvents.size)
 
         val progressMap = mutableMapOf<String, Double>()
         val newlyCompleted = mutableListOf<String>()
@@ -73,7 +107,6 @@ class HabitService(
                 val matchesType = it.type.equals(habit.category, ignoreCase = true)
                 val matchesName = it.content.contains(habit.name, ignoreCase = true) || 
                                  habit.name.contains(it.content, ignoreCase = true)
-                
                 (matchesType || matchesName) && (it.payload.containsKey("duration_min") || it.payload.containsKey("value"))
             }
             
@@ -82,15 +115,11 @@ class HabitService(
             }
             
             progressMap[habit.id] = totalValue
-            
-            // Only update streak if it's currently completed
             if (totalValue >= habit.targetValue) {
                 newlyCompleted.add(habit.id)
                 updateStreak(habit, todayStr)
             }
         }
-        
-        // Save (this will overwrite the previous SNAP#date entry)
         saveProgress(userId, todayStr, progressMap, newlyCompleted)
     }
 
@@ -126,16 +155,6 @@ class HabitService(
 
     fun getDailyProgress(userId: String = "default-user"): HabitProgress? {
         val today = LocalDate.now().format(DateTimeFormatter.ISO_DATE)
-        val key = mapOf("pk" to "USER#$userId".toAV(), "sk" to "SNAP#$today".toAV())
-        return try {
-            val response = dynamoDbClient.getItem(GetItemRequest.builder().tableName(tableName).key(key).build())
-            if (!response.hasItem()) return null
-            val item = response.item()
-            HabitProgress(
-                userId = userId, date = today,
-                progressMap = item["progressMap"]?.m()?.mapValues { it.value.n().toDouble() } ?: emptyMap(),
-                completedIds = item["completedIds"]?.ss()?.filter { it != "NONE" } ?: emptyList()
-            )
-        } catch (e: Exception) { null }
+        return getSnapshotForDate(userId, today)
     }
 }

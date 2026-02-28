@@ -27,6 +27,19 @@ data class HabitProgress(
 )
 
 @RegisterForReflection
+data class DaySummary(
+    val date: String,
+    val label: String, // M, T, W...
+    val ratio: Double // 0.0 to 1.0
+)
+
+@RegisterForReflection
+data class WeeklySummary(
+    val days: List<DaySummary>,
+    val totalScore: String // e.g. "12/21"
+)
+
+@RegisterForReflection
 data class HabitUpdateIntent(
     val habitId: String? = null,
     val habitName: String? = null,

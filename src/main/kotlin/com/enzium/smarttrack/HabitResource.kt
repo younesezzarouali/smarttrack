@@ -28,6 +28,13 @@ class HabitResource(
         return habitService.getDailyProgress("default-user") ?: HabitProgress(userId = "default-user", date = "", progressMap = emptyMap(), completedIds = emptyList())
     }
 
+    @GET
+    @Path("/summary")
+    @Blocking
+    fun getSummary(): WeeklySummary {
+        return habitService.getWeeklySummary("default-user")
+    }
+
     @POST
     @Blocking
     fun create(request: HabitCreationIntent): Response {
