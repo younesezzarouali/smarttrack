@@ -31,20 +31,21 @@ class GeminiService(
     }
 
     fun generateBriefing(history: List<LifeEvent>): String {
-        if (apiKey == "NO_KEY" || apiKey.isBlank()) return "Assistant configuration incomplete."
-        if (history.isEmpty()) return "Rien de noté pour aujourd'hui ! Dis-moi ce qui t'arrive pour commencer."
+        if (apiKey == "NO_KEY" || apiKey.isBlank()) return "Configuration requise."
+        if (history.isEmpty()) return "Journée vierge. Quoi de neuf ?"
 
         val historyContext = history.joinToString("\n") { 
-            "- [${it.type}] ${it.content} (Details: ${it.payload})" 
+            "- [${it.type}] ${it.content} (${it.payload})" 
         }
         
         val prompt = """
-            Tu es un assistant Life OS percutant et factuel. Voici les événements de la journée :
+            Tu es un assistant Life OS ultra-minimaliste. Voici la journée :
             $historyContext
             
-            Fais un résumé TRÈS COURT (2 lignes max). 
-            RÈGLE : Tu DOIS citer au moins un élément concret (nom d'item, montant ou durée) présent dans la liste.
-            Sois motivant mais évite les phrases génériques comme "Tu as géré tes finances". Dis plutôt "Tu as dépensé X€ pour Y".
+            Fais un résumé percutant en 15 mots maximum. 
+            Utilise des verbes d'action. 
+            Sois factuel sur les chiffres clés.
+            Exemple : "12€ en café, 5km de run. Belle avancée sur le projet X."
             Réponds uniquement en texte brut.
         """.trimIndent()
 
@@ -55,9 +56,9 @@ class GeminiService(
 
         return try {
             val response = executeWithRetry(3) { geminiApi.generateContent(apiKey, request) }
-            response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "Prêt pour la suite !"
+            response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: "C'est parti !"
         } catch (e: Exception) {
-            "Continue de noter tes activités pour un résumé complet."
+            "Continue de noter ton activité."
         }
     }
 
