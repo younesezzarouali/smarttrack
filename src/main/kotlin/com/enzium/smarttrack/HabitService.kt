@@ -30,11 +30,12 @@ class HabitService(
             dynamoDbClient.query(request).items().map { item ->
                 Habit(
                     id = item["habitId"]?.s() ?: "",
-                    userId = item["userId"]?.s() ?: "",
+                    userId = item["userId"]?.s() ?: "default-user",
                     name = item["name"]?.s() ?: "",
                     type = item["type"]?.s() ?: "TIME",
                     targetValue = item["targetValue"]?.n()?.toDouble() ?: 0.0,
                     unit = item["unit"]?.s() ?: "",
+                    frequency = item["frequency"]?.s() ?: "DAILY",
                     category = item["category"]?.s() ?: "HEALTH",
                     streak = item["streak"]?.n()?.toInt() ?: 0,
                     lastCompletedDate = item["lastCompletedDate"]?.s() ?: "",
@@ -47,16 +48,11 @@ class HabitService(
         }
     }
 
-    /**
-     * Logic: Recalculates habits for today by scanning today's events.
-     * High Performance: Only scans events from today.
-     */
     fun syncDailyProgress(userId: String = "default-user") {
         val today = LocalDate.now().format(DateTimeFormatter.ISO_DATE)
         val habits = getHabits(userId).filter { it.active }
         if (habits.isEmpty()) return
 
-        // 1. Get all events from today
         val startOfDay = LocalDate.now().atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
         val todayEvents = eventService.listAll(userId, sinceTimestamp = startOfDay)
 
@@ -78,13 +74,11 @@ class HabitService(
                 updateStreak(habit, today)
             }
         }
-
-        // 2. Save snapshot
         saveProgress(userId, today, progressMap, newlyCompleted)
     }
 
     private fun updateStreak(habit: Habit, today: String) {
-        if (habit.lastCompletedDate == today) return // Already updated today
+        if (habit.lastCompletedDate == today) return
 
         val yesterday = LocalDate.now().minusDays(1).format(DateTimeFormatter.ISO_DATE)
         if (habit.lastCompletedDate == yesterday) {
@@ -94,7 +88,6 @@ class HabitService(
         }
         habit.lastCompletedDate = today
         
-        // Persist streak back to Habits table
         val item = mutableMapOf<String, AttributeValue>()
         item["userId"] = habit.userId.toAV()
         item["habitId"] = habit.id.toAV()
@@ -102,6 +95,7 @@ class HabitService(
         item["type"] = habit.type.toAV()
         item["targetValue"] = habit.targetValue.toAV()
         item["unit"] = habit.unit.toAV()
+        item["frequency"] = habit.frequency.toAV()
         item["category"] = habit.category.toAV()
         item["streak"] = habit.streak.toDouble().toAV()
         item["lastCompletedDate"] = habit.lastCompletedDate.toAV()
@@ -130,7 +124,7 @@ class HabitService(
             
             val item = response.item()
             HabitProgress(
-                userId = item["userId"]?.s() ?: "",
+                userId = item["userId"]?.s() ?: "default-user",
                 date = item["date"]?.s() ?: "",
                 progressMap = item["progressMap"]?.m()?.mapValues { it.value.n().toDouble() } ?: emptyMap(),
                 completedIds = item["completedIds"]?.ss()?.filter { it != "NONE" } ?: emptyList()
@@ -140,26 +134,24 @@ class HabitService(
         }
     }
 
-    /**
-     * Bootstraps some default habits if table is empty
-     */
     fun setupDefaultHabits(userId: String = "default-user") {
         val existing = getHabits(userId)
         if (existing.isNotEmpty()) return
 
         val defaults = listOf(
-            Habit(id = "h1", name = "Daily Sport", type = "TIME", targetValue = 15.0, unit = "min", category = "HEALTH"),
-            Habit(id = "h2", name = "Deep Work", type = "TIME", targetValue = 60.0, unit = "min", category = "WORK")
+            Habit(id = "h1", userId = userId, name = "Daily Sport", type = "TIME", targetValue = 15.0, unit = "min", category = "HEALTH"),
+            Habit(id = "h2", userId = userId, name = "Deep Work", type = "TIME", targetValue = 60.0, unit = "min", category = "WORK")
         )
 
         defaults.forEach { habit ->
             val item = mutableMapOf<String, AttributeValue>()
-            item["userId"] = userId.toAV()
+            item["userId"] = habit.userId.toAV()
             item["habitId"] = habit.id.toAV()
             item["name"] = habit.name.toAV()
             item["type"] = habit.type.toAV()
             item["targetValue"] = habit.targetValue.toAV()
             item["unit"] = habit.unit.toAV()
+            item["frequency"] = habit.frequency.toAV()
             item["category"] = habit.category.toAV()
             item["streak"] = 0.0.toAV()
             item["lastCompletedDate"] = "".toAV()

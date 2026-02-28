@@ -22,47 +22,40 @@ class LifeResource(
     @Path("/magic")
     @Blocking
     fun magic(input: Map<String, String>): Response {
-        val text = input["text"] ?: throw BadRequestException("Input text is required")
+        val text = input["text"] ?: throw BadRequestException("Input text required")
         
-        // Ensure habits are initialized for this user
-        habitService.setupDefaultHabits()
+        // 1. Get Context (Recent History + Active Habits)
+        val history = eventService.listAll(limit = 20)
+        val activeHabits = habitService.getHabits()
         
-        val history = eventService.listAll(limit = 50)
-        val result = geminiService.interact(text, history)
+        // 2. IA analysis with full context
+        val result = geminiService.interact(text, history, activeHabits)
+        
         return Response.ok(result).build()
-    }
-
-    @GET
-    @Path("/briefing")
-    @Blocking
-    fun getBriefing(@QueryParam("timezoneOffset") offsetMinutes: Int?): Map<String, String> {
-        val now = Instant.now()
-        val calendar = Calendar.getInstance()
-        calendar.timeInMillis = now.toEpochMilli()
-        if (offsetMinutes != null) {
-            calendar.add(Calendar.MINUTE, -offsetMinutes)
-        }
-        calendar.set(Calendar.HOUR_OF_DAY, 0)
-        calendar.set(Calendar.MINUTE, 0)
-        calendar.set(Calendar.SECOND, 0)
-        val startOfDay = calendar.timeInMillis
-
-        val todayEvents = eventService.listAll(sinceTimestamp = startOfDay)
-        val summary = geminiService.generateBriefing(todayEvents)
-        return mapOf("briefing" to summary)
     }
 
     @POST
     @Path("/events/batch")
     @Blocking
     fun saveBatch(events: List<LifeEvent>): Response {
-        log.infof("Saving batch of %d events", events.size)
         eventService.addEvents(events)
-        
-        // CRITICAL: Sync habits after batch save
         habitService.syncDailyProgress()
-        
         return Response.status(Response.Status.CREATED).build()
+    }
+
+    @GET
+    @Path("/briefing")
+    @Blocking
+    fun getBriefing(@QueryParam("timezoneOffset") offsetMinutes: Int?): Map<String, String> {
+        val calendar = Calendar.getInstance()
+        if (offsetMinutes != null) calendar.add(Calendar.MINUTE, -offsetMinutes)
+        calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        
+        val todayEvents = eventService.listAll(sinceTimestamp = calendar.timeInMillis)
+        val summary = geminiService.generateBriefing(todayEvents)
+        return mapOf("briefing" to summary)
     }
 
     @PUT
@@ -72,15 +65,6 @@ class LifeResource(
         eventService.updateEvent(event)
         habitService.syncDailyProgress()
         return Response.ok(event).build()
-    }
-
-    @DELETE
-    @Path("/events/{timestamp}")
-    @Blocking
-    fun delete(@PathParam("timestamp") timestamp: Long): Response {
-        eventService.deleteEvent(timestamp)
-        habitService.syncDailyProgress()
-        return Response.noContent().build()
     }
 
     @GET
