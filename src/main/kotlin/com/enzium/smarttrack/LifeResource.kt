@@ -16,27 +16,27 @@ class LifeResource(
     private val log: Logger = Logger.getLogger(LifeResource::class.java)
 
     @POST
-    @Path("/magic")
+    @Path("/parse")
     @Blocking
-    fun magic(input: Map<String, String>): Response {
+    fun parse(input: Map<String, String>): List<LifeEvent> {
         val text = input["text"] ?: throw BadRequestException("Input text is required")
-        log.infof("Processing magic input: %s", text)
+        log.infof("Parsing text: %s", text)
+        return geminiService.parseInput(text)
+    }
 
-        return try {
-            val events = geminiService.parseInput(text)
-            eventService.addEvents(events)
-            Response.ok(events).build()
-        } catch (e: Exception) {
-            log.error("AI Error", e)
-            Response.status(500).entity(mapOf("error" to e.message)).build()
-        }
+    @POST
+    @Path("/events/batch")
+    @Blocking
+    fun saveBatch(events: List<LifeEvent>): Response {
+        log.infof("Saving batch of %d events", events.size)
+        eventService.addEvents(events)
+        return Response.status(Response.Status.CREATED).build()
     }
 
     @PUT
     @Path("/events")
     @Blocking
     fun update(event: LifeEvent): Response {
-        log.infof("Updating event: %d", event.timestamp)
         eventService.updateEvent(event)
         return Response.ok(event).build()
     }
