@@ -129,6 +129,8 @@
                 <version>3.13.0</version>
                 <configuration>
                     <parameters>${maven.compiler.parameters}</parameters>
+                    <source>${java.version}</source>
+                    <target>${java.version}</target>
                 </configuration>
             </plugin>
             <plugin>
