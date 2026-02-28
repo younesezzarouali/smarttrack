@@ -77,6 +77,16 @@
             <artifactId>url-connection-client</artifactId>
         </dependency>
 
+        <!-- REST Client for AI Calls -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-rest-client-jackson</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.module</groupId>
+            <artifactId>jackson-module-kotlin</artifactId>
+        </dependency>
+
         <!-- AWS Lambda HTTP -->
         <dependency>
             <groupId>io.quarkus</groupId>
