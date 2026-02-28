@@ -36,7 +36,7 @@ class GeminiService(
         if (apiKey == "NO_KEY" || apiKey.isBlank()) throw RuntimeException("Gemini API Key missing")
 
         val habitsContext = if (habits.isEmpty()) "Aucune habitude configurée"
-            else habits.joinToString("\n") { "- ID: ${it.id}, Name: ${it.name}, Target: ${it.targetValue} ${it.unit}" }
+            else habits.joinToString("\n") { "- ID: ${it.id}, Name: ${it.name}, Category: ${it.category}, Target: ${it.targetValue} ${it.unit}" }
 
         val historyContext = if (history.isEmpty()) "Aucun historique" 
             else history.take(20).joinToString("\n") { "- [${it.type}] ${it.content}" }
@@ -53,7 +53,7 @@ class GeminiService(
 
         return executeWithRetry(3) {
             val response = geminiApi.generateContent(apiKey, request)
-            parseInteractionResponse(response)
+            parseInteractionResponse(response, habits)
         }
     }
 
@@ -65,6 +65,7 @@ class GeminiService(
             } catch (e: Exception) {
                 lastException = e
                 if (e.message?.contains("429") == true && attempt < maxAttempts) {
+                    log.warnf("Gemini Rate Limit. Retry %d...", attempt)
                     TimeUnit.SECONDS.sleep(2)
                     continue
                 }
@@ -74,20 +75,23 @@ class GeminiService(
         throw RuntimeException("AI Service busy", lastException)
     }
 
-    private fun parseInteractionResponse(response: GeminiResponse): GeminiInteractionResponse {
+    private fun parseInteractionResponse(response: GeminiResponse, habits: List<Habit>): GeminiInteractionResponse {
         val jsonString = response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text
             ?: throw RuntimeException("Empty AI response")
         
+        log.infof("Raw AI JSON: %s", jsonString)
+
         return try {
             val node = mapper.readTree(jsonString)
             val intent = node.get("intent")?.asText() ?: "CAPTURE"
             val dailyInsight = node.get("dailyInsight")?.asText()
             
-            val events = node.get("events")?.let { eventsNode ->
+            val events = mutableListOf<LifeEvent>()
+            node.get("events")?.let { eventsNode ->
                 if (eventsNode.isArray) {
-                    eventsNode.map { eventNode ->
+                    eventsNode.mapTo(events) { eventNode ->
                         LifeEvent().apply {
-                            userId = "default-user" // Force default user
+                            userId = "default-user"
                             type = eventNode.get("type")?.asText() ?: "NOTE"
                             content = eventNode.get("content")?.asText() ?: ""
                             payload = eventNode.get("payload")?.let { payloadNode ->
@@ -97,12 +101,13 @@ class GeminiService(
                             } ?: emptyMap()
                         }
                     }
-                } else emptyList()
-            } ?: emptyList()
+                }
+            }
 
-            val habitUpdates = node.get("habitUpdates")?.let { updatesNode ->
+            val habitUpdates = mutableListOf<HabitUpdateIntent>()
+            node.get("habitUpdates")?.let { updatesNode ->
                 if (updatesNode.isArray) {
-                    updatesNode.map { updateNode ->
+                    updatesNode.mapTo(habitUpdates) { updateNode ->
                         HabitUpdateIntent(
                             habitId = updateNode.get("habitId")?.asText(),
                             habitName = updateNode.get("habitName")?.asText(),
@@ -110,8 +115,26 @@ class GeminiService(
                             confidence = updateNode.get("confidence")?.asDouble() ?: 1.0
                         )
                     }
-                } else emptyList()
-            } ?: emptyList()
+                }
+            }
+
+            // CRITICAL FALLBACK: If AI returned a habit update but NO event, create the event
+            habitUpdates.forEach { update ->
+                val alreadyHasEvent = events.any { it.content.contains(update.habitName ?: "", ignoreCase = true) }
+                if (!alreadyHasEvent && update.progressDelta > 0) {
+                    log.info("Synthesizing missing event for habit update: ${update.habitName}")
+                    val habit = habits.find { it.name.equals(update.habitName, ignoreCase = true) || it.id == update.habitId }
+                    events.add(LifeEvent().apply {
+                        userId = "default-user"
+                        type = habit?.category ?: "HEALTH"
+                        content = update.habitName ?: "Activity"
+                        payload = mapOf(
+                            "duration_min" to update.progressDelta.toString(),
+                            "sentiment" to "POSITIVE"
+                        )
+                    })
+                }
+            }
 
             GeminiInteractionResponse(intent, dailyInsight, events, habitUpdates)
         } catch (e: Exception) {
@@ -121,6 +144,6 @@ class GeminiService(
     }
 
     fun generateBriefing(history: List<LifeEvent>): String {
-        return "Insight calculation moved to interaction flow."
+        return "Insight calculated in interaction."
     }
 }
