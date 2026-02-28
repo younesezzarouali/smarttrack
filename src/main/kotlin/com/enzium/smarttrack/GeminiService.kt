@@ -20,56 +20,65 @@ class GeminiService(
 
     private val systemPrompt: String by lazy {
         val stream: InputStream = Thread.currentThread().contextClassLoader.getResourceAsStream("prompts/gemini-system.txt")
-            ?: throw RuntimeException("Prompt file not found")
+            ?: throw RuntimeException("Prompt definition missing in resources")
         stream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
     }
 
     fun parseInput(userInput: String): List<LifeEvent> {
-        if (apiKey == "NO_KEY") throw RuntimeException("Gemini API Key is missing")
+        if (apiKey == "NO_KEY" || apiKey.isBlank()) throw RuntimeException("Gemini API Key is not configured")
 
-        val combinedText = "$systemPrompt\n\nTexte utilisateur : $userInput"
+        val combinedText = "$systemPrompt\n\nUser Input: $userInput"
         
         val request = GeminiRequest(
             contents = listOf(Content(role = "user", parts = listOf(Part(text = combinedText)))),
             generationConfig = GenerationConfig(response_mime_type = "application/json")
         )
 
-        // Tentative d'appel avec un petit mécanisme de retry pour l'erreur 429
+        return executeWithRetry(3) {
+            val response = geminiApi.generateContent(apiKey, request)
+            extractAndMapEvents(response)
+        }
+    }
+
+    private fun <T> executeWithRetry(maxAttempts: Int, block: () -> T): T {
         var lastException: Exception? = null
-        for (i in 1..3) {
+        for (attempt in 1..maxAttempts) {
             try {
-                val response = geminiApi.generateContent(apiKey, request)
-                return processResponse(response)
+                return block()
             } catch (e: Exception) {
                 lastException = e
-                if (e.message?.contains("429") == true) {
-                    log.warnf("Gemini API rate limited (429). Retrying in 2s... (Attempt %d/3)", i)
+                if (e.message?.contains("429") == true && attempt < maxAttempts) {
+                    log.warnf("Gemini Rate Limit (429) hit. Retry %d/%d...", attempt, maxAttempts)
                     TimeUnit.SECONDS.sleep(2)
                     continue
                 }
                 break
             }
         }
-        
-        log.error("AI processing failed after retries", lastException)
-        throw RuntimeException("AI temporarily unavailable, please try again in a moment", lastException)
+        throw RuntimeException("AI Service temporarily unavailable: ${lastException?.message}", lastException)
     }
 
-    private fun processResponse(response: GeminiResponse): List<LifeEvent> {
+    private fun extractAndMapEvents(response: GeminiResponse): List<LifeEvent> {
         val jsonString = response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text
-            ?: throw RuntimeException("No response from AI")
+            ?: throw RuntimeException("AI returned an empty response")
         
-        log.infof("Gemini Parsed: %s", jsonString)
+        log.debugf("Gemini Output: %s", jsonString)
         
-        val typeRef = object : TypeReference<List<Map<String, Any>>>() {}
-        val rawEvents: List<Map<String, Any>> = mapper.readValue(jsonString, typeRef)
-        
-        return rawEvents.map { raw ->
-            LifeEvent().apply {
-                type = raw["type"]?.toString() ?: "NOTE"
-                content = raw["content"]?.toString() ?: ""
-                payload = (raw["payload"] as? Map<String, Any>)?.mapValues { it.value.toString() } ?: emptyMap()
+        return try {
+            val typeRef = object : TypeReference<List<Map<String, Any>>>() {}
+            val rawEvents: List<Map<String, Any>> = mapper.readValue(jsonString, typeRef)
+            
+            rawEvents.map { raw ->
+                LifeEvent().apply {
+                    type = raw["type"]?.toString() ?: "NOTE"
+                    content = raw["content"]?.toString() ?: ""
+                    val rawPayload = raw["payload"] as? Map<*, *>
+                    payload = rawPayload?.entries?.associate { it.key.toString() to it.value.toString() } ?: emptyMap()
+                }
             }
+        } catch (e: Exception) {
+            log.error("Failed to parse AI JSON output", e)
+            throw RuntimeException("Structural error in AI response", e)
         }
     }
 }

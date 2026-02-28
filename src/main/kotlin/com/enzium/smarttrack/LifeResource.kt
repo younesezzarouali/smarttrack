@@ -19,20 +19,16 @@ class LifeResource(
     @Path("/magic")
     @Blocking
     fun magic(input: Map<String, String>): Response {
-        val text = input["text"] ?: return Response.status(400).entity("Missing text").build()
-        log.infof("Magic input received: %s", text)
+        val text = input["text"] ?: throw BadRequestException("Input text is required")
+        log.infof("Processing magic input: %s", text)
 
-        try {
+        return try {
             val events = geminiService.parseInput(text)
-            var offset = 0L
-            events.forEach { event ->
-                event.timestamp = event.timestamp + (offset++)
-                eventService.addEvent(event)
-            }
-            return Response.ok(events).build()
+            eventService.addEvents(events)
+            Response.ok(events).build()
         } catch (e: Exception) {
-            log.error("Magic processing failed", e)
-            return Response.status(500).entity(mapOf("error" to e.message)).build()
+            log.error("Parsing or persistence failed", e)
+            Response.status(500).entity(mapOf("error" to e.message)).build()
         }
     }
 
@@ -47,7 +43,6 @@ class LifeResource(
     @Path("/events")
     @Blocking
     fun clear(): Response {
-        log.info("Request to clear all events")
         eventService.clearAll()
         return Response.noContent().build()
     }

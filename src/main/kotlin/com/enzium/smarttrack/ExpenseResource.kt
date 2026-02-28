@@ -40,7 +40,7 @@ class ExpenseResource(
                 "category" to (expense["category"]?.toString() ?: "OTHER")
             )
         }
-        eventService.addEvent(event)
+        eventService.addEvents(listOf(event))
         return Response.status(Response.Status.CREATED).entity(expense).build()
     }
 
