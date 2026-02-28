@@ -52,25 +52,23 @@ class HabitService(
         }
     }
 
+    /**
+     * Re-calculates and OVERWRITES today's snapshot based on current events.
+     */
     fun syncDailyProgress(userId: String = "default-user") {
         val todayStr = LocalDate.now().format(DateTimeFormatter.ISO_DATE)
         val habits = getHabits(userId)
-        if (habits.isEmpty()) {
-            log.info("No active habits found for sync.")
-            return
-        }
-
+        
         // Search for all events in the last 24 hours
         val sinceTs = Instant.now().minus(24, ChronoUnit.HOURS).toEpochMilli()
         val recentEvents = eventService.listAll(userId, sinceTimestamp = sinceTs)
 
-        log.infof("Syncing %d habits with %d recent events (since ts: %d)", habits.size, recentEvents.size, sinceTs)
+        log.infof("Full Sync for %s: %d habits vs %d events", userId, habits.size, recentEvents.size)
 
         val progressMap = mutableMapOf<String, Double>()
         val newlyCompleted = mutableListOf<String>()
 
         habits.forEach { habit ->
-            log.debugf("Processing habit: %s (id: %s, category: %s)", habit.name, habit.id, habit.category)
             val matchingEvents = recentEvents.filter { 
                 val matchesType = it.type.equals(habit.category, ignoreCase = true)
                 val matchesName = it.content.contains(habit.name, ignoreCase = true) || 
@@ -79,32 +77,27 @@ class HabitService(
                 (matchesType || matchesName) && (it.payload.containsKey("duration_min") || it.payload.containsKey("value"))
             }
             
-            log.infof("Found %d matching events for habit %s", matchingEvents.size, habit.name)
-
             val totalValue = matchingEvents.sumOf { 
                 it.payload["duration_min"]?.toDoubleOrNull() ?: it.payload["value"]?.toDoubleOrNull() ?: 0.0 
             }
             
             progressMap[habit.id] = totalValue
-            log.infof("Total progress for %s: %.1f", habit.name, totalValue)
-
+            
+            // Only update streak if it's currently completed
             if (totalValue >= habit.targetValue) {
                 newlyCompleted.add(habit.id)
                 updateStreak(habit, todayStr)
             }
         }
+        
+        // Save (this will overwrite the previous SNAP#date entry)
         saveProgress(userId, todayStr, progressMap, newlyCompleted)
     }
 
     private fun updateStreak(habit: Habit, today: String) {
         if (habit.lastCompletedDate == today) return
-
         val yesterday = LocalDate.now().minusDays(1).format(DateTimeFormatter.ISO_DATE)
-        if (habit.lastCompletedDate == yesterday) {
-            habit.streak += 1
-        } else {
-            habit.streak = 1
-        }
+        habit.streak = if (habit.lastCompletedDate == yesterday) habit.streak + 1 else 1
         habit.lastCompletedDate = today
         
         val item = mutableMapOf<String, AttributeValue>()
@@ -119,7 +112,6 @@ class HabitService(
         item["streak"] = habit.streak.toDouble().toAV()
         item["lastCompletedDate"] = habit.lastCompletedDate.toAV()
         item["active"] = AttributeValue.builder().bool(habit.active).build()
-
         dynamoDbClient.putItem(PutItemRequest.builder().tableName(tableName).item(item).build())
     }
 
@@ -129,27 +121,21 @@ class HabitService(
         items["sk"] = "SNAP#$date".toAV()
         items["progressMap"] = AttributeValue.builder().m(progress.mapValues { it.value.toAV() }).build()
         items["completedIds"] = AttributeValue.builder().ss(completed.ifEmpty { listOf("NONE") }).build()
-
         dynamoDbClient.putItem(PutItemRequest.builder().tableName(tableName).item(items).build())
     }
 
     fun getDailyProgress(userId: String = "default-user"): HabitProgress? {
         val today = LocalDate.now().format(DateTimeFormatter.ISO_DATE)
         val key = mapOf("pk" to "USER#$userId".toAV(), "sk" to "SNAP#$today".toAV())
-        
         return try {
             val response = dynamoDbClient.getItem(GetItemRequest.builder().tableName(tableName).key(key).build())
             if (!response.hasItem()) return null
-            
             val item = response.item()
             HabitProgress(
-                userId = userId,
-                date = today,
+                userId = userId, date = today,
                 progressMap = item["progressMap"]?.m()?.mapValues { it.value.n().toDouble() } ?: emptyMap(),
                 completedIds = item["completedIds"]?.ss()?.filter { it != "NONE" } ?: emptyList()
             )
-        } catch (e: Exception) {
-            null
-        }
+        } catch (e: Exception) { null }
     }
 }

@@ -82,6 +82,7 @@ class LifeResource(
     @Path("/events/{timestamp}")
     @Blocking
     fun delete(@PathParam("timestamp") timestamp: Long): Response {
+        log.infof("Deleting event at timestamp: %d", timestamp)
         eventService.deleteEvent(timestamp)
         habitService.syncDailyProgress()
         return Response.noContent().build()
