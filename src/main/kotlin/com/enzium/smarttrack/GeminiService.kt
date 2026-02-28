@@ -32,20 +32,22 @@ class GeminiService(
 
     fun generateBriefing(history: List<LifeEvent>): String {
         if (apiKey == "NO_KEY" || apiKey.isBlank()) return "Configuration requise."
-        if (history.isEmpty()) return "Journée vierge. Quoi de neuf ?"
+        if (history.isEmpty()) return "Journée vierge. Prêt à optimiser ton temps et ton budget ?"
 
         val historyContext = history.joinToString("\n") { 
             "- [${it.type}] ${it.content} (${it.payload})" 
         }
         
         val prompt = """
-            Tu es un assistant Life OS ultra-minimaliste. Voici la journée :
+            Tu es un Coach de Performance et d'Optimisation Personnelle. Voici les événements de la journée de l'utilisateur :
             $historyContext
             
-            Fais un résumé percutant en 15 mots maximum. 
-            Utilise des verbes d'action. 
-            Sois factuel sur les chiffres clés.
-            Exemple : "12€ en café, 5km de run. Belle avancée sur le projet X."
+            Ta mission : Faire un briefing ultra-percutant (2 lignes max) avec un ton de leader.
+            STRUCTURE :
+            1. Un constat factuel et chiffré (ex: "45€ dépensés, 2h de focus").
+            2. Une interprétation ou un conseil de coach (ex: "Attention à la dérive budgétaire" ou "Belle discipline sur le sport").
+            
+            SOIS HUMAIN : Utilise le 'tu'. Ne sois pas un robot. Cite au moins un objet précis.
             Réponds uniquement en texte brut.
         """.trimIndent()
 

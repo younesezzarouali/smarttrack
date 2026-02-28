@@ -22,6 +22,7 @@ class LifeResource(
     @Blocking
     fun magic(input: Map<String, String>): Response {
         val text = input["text"] ?: throw BadRequestException("Input text is required")
+        // Optimization: Still limit to 50 for context
         val history = eventService.listAll(limit = 50)
         val result = geminiService.interact(text, history)
         return Response.ok(result).build()
@@ -31,18 +32,21 @@ class LifeResource(
     @Path("/briefing")
     @Blocking
     fun getBriefing(@QueryParam("timezoneOffset") offsetMinutes: Int?): Map<String, String> {
-        val now = Instant.now()
         val calendar = Calendar.getInstance()
-        calendar.timeInMillis = now.toEpochMilli()
         if (offsetMinutes != null) {
             calendar.add(Calendar.MINUTE, -offsetMinutes)
         }
         calendar.set(Calendar.HOUR_OF_DAY, 0)
         calendar.set(Calendar.MINUTE, 0)
         calendar.set(Calendar.SECOND, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+        
         val startOfDay = calendar.timeInMillis
 
-        val todayEvents = eventService.listAll().filter { it.timestamp >= startOfDay }
+        // OPTIMIZATION: Query DynamoDB only for today's events instead of filtering in memory
+        val todayEvents = eventService.listAll(sinceTimestamp = startOfDay)
+        
+        log.infof("Generating briefing for %d events", todayEvents.size)
         val summary = geminiService.generateBriefing(todayEvents)
         return mapOf("briefing" to summary)
     }
@@ -67,7 +71,6 @@ class LifeResource(
     @Path("/events/{timestamp}")
     @Blocking
     fun delete(@PathParam("timestamp") timestamp: Long): Response {
-        log.infof("Deleting event at %d", timestamp)
         eventService.deleteEvent(timestamp)
         return Response.noContent().build()
     }
@@ -76,7 +79,7 @@ class LifeResource(
     @Path("/events")
     @Blocking
     fun list(): List<LifeEvent> {
-        return eventService.listAll()
+        return eventService.listAll(limit = 100) // Safety limit
     }
 
     @DELETE
