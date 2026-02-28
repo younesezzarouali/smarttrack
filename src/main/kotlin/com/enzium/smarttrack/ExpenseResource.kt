@@ -1,23 +1,23 @@
 package com.enzium.smarttrack
 
-import jakarta.inject.Inject
+import io.smallrye.common.annotation.Blocking
 import jakarta.ws.rs.*
 import jakarta.ws.rs.core.Response
 import jakarta.ws.rs.core.MediaType
-import java.time.Instant
+import org.jboss.logging.Logger
 
 @Path("/expenses")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
-class ExpenseResource {
-
-    @Inject
-    lateinit var eventService: LifeEventService
+class ExpenseResource(
+    private val eventService: LifeEventService
+) {
+    private val log: Logger = Logger.getLogger(ExpenseResource::class.java)
 
     @GET
+    @Blocking
     fun all(): List<Map<String, Any>> {
-        val events = eventService.listAll()
-        return events.filter { it.type == "FINANCE" }.map { event ->
+        return eventService.listAll().filter { it.type == "FINANCE" }.map { event ->
             mapOf(
                 "label" to (event.payload["label"] ?: event.content),
                 "amount" to (event.payload["amount"]?.toDouble() ?: 0.0),
@@ -28,7 +28,9 @@ class ExpenseResource {
     }
 
     @POST
+    @Blocking
     fun create(expense: Map<String, Any>): Response {
+        log.info("Creating new expense event")
         val event = LifeEvent().apply {
             type = "FINANCE"
             content = expense["label"]?.toString() ?: ""
@@ -44,14 +46,13 @@ class ExpenseResource {
 
     @GET
     @Path("/summary")
+    @Blocking
     fun summary(): Map<String, Any> {
-        val events = eventService.listAll().filter { it.type == "FINANCE" }
-        val allExpenses = events.map { 
-            (it.payload["amount"]?.toDouble() ?: 0.0) 
-        }
-        val total = allExpenses.sum()
+        val financeEvents = eventService.listAll().filter { it.type == "FINANCE" }
         
-        val byCat = events.groupBy { it.payload["category"] ?: "OTHER" }
+        val total = financeEvents.sumOf { it.payload["amount"]?.toDouble() ?: 0.0 }
+        
+        val byCat = financeEvents.groupBy { it.payload["category"] ?: "OTHER" }
             .mapValues { entry -> 
                 entry.value.sumOf { it.payload["amount"]?.toDouble() ?: 0.0 } 
             }
