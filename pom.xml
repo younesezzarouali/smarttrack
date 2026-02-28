@@ -42,14 +42,14 @@
             <artifactId>kotlin-stdlib-jdk8</artifactId>
         </dependency>
 
-        <!-- Base REST API (Reactive) -->
+        <!-- Base REST API -->
         <dependency>
             <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-resteasy-reactive</artifactId>
+            <artifactId>quarkus-rest</artifactId>
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-resteasy-reactive-jackson</artifactId>
+            <artifactId>quarkus-rest-jackson</artifactId>
         </dependency>
 
         <!-- Hibernate ORM with Panache Kotlin -->
