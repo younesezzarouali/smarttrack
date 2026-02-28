@@ -31,7 +31,6 @@ class LifeEventService(
     fun saveToDb(event: LifeEvent) {
         try {
             val userId = if (event.userId.isNullOrBlank()) "default-user" else event.userId
-            // SK format: EVENT#timestamp#uuid
             val sk = "EVENT#${event.timestamp}#${UUID.randomUUID().toString().take(4)}"
             
             val item = mutableMapOf(
@@ -54,14 +53,16 @@ class LifeEventService(
         val expressionValues = mutableMapOf<String, AttributeValue>()
         expressionValues[":pk"] = "USER#$userId".toAV()
         
+        // CRITICAL FIX: Ensure we only get EVENT# items by using BETWEEN 
+        // or a strict prefix check to avoid matching SNAP# or HABIT#
         var condition = "pk = :pk"
         
         if (sinceTimestamp != null) {
-            // Filter: starts with EVENT# but is greater than or equal to EVENT#timestamp
-            condition += " AND sk >= :sk_start"
+            // Range: from EVENT#timestamp to EVENT#z (z is higher than any number)
+            condition += " AND sk BETWEEN :sk_start AND :sk_end"
             expressionValues[":sk_start"] = "EVENT#$sinceTimestamp".toAV()
+            expressionValues[":sk_end"] = "EVENT#z".toAV()
         } else {
-            // Filter: just starts with EVENT#
             condition += " AND begins_with(sk, :sk_prefix)"
             expressionValues[":sk_prefix"] = "EVENT#".toAV()
         }
@@ -70,7 +71,7 @@ class LifeEventService(
             .tableName(tableName)
             .keyConditionExpression(condition)
             .expressionAttributeValues(expressionValues)
-            .scanIndexForward(false) // Most recent first
+            .scanIndexForward(false)
 
         if (limit != null) {
             requestBuilder.limit(limit)
@@ -78,26 +79,32 @@ class LifeEventService(
 
         return try {
             val response = dynamoDbClient.query(requestBuilder.build())
-            response.items().map { mapToLifeEvent(it) }
+            response.items()
+                .mapNotNull { mapToLifeEvent(it) } // Filter out any malformed entries
         } catch (e: Exception) {
             log.error("Query failed in LifeEventService", e)
             emptyList()
         }
     }
 
-    private fun mapToLifeEvent(item: Map<String, AttributeValue>) = LifeEvent().apply {
-        userId = item["pk"]?.s()?.removePrefix("USER#") ?: "default-user"
-        val sk = item["sk"]?.s() ?: ""
+    private fun mapToLifeEvent(item: Map<String, AttributeValue>): LifeEvent? {
+        val sk = item["sk"]?.s() ?: return null
+        if (!sk.startsWith("EVENT#")) return null
+        
         val skParts = sk.split("#")
-        timestamp = skParts.getOrNull(1)?.toLong() ?: 0L
-        type = item["type"]?.s() ?: "NOTE"
-        content = item["content"]?.s() ?: ""
-        payload = item["payload"]?.m()?.mapValues { it.value.s() } ?: emptyMap()
+        val timestamp = skParts.getOrNull(1)?.toLongOrNull() ?: return null
+        
+        return LifeEvent().apply {
+            this.userId = item["pk"]?.s()?.removePrefix("USER#") ?: "default-user"
+            this.timestamp = timestamp
+            this.type = item["type"]?.s() ?: "NOTE"
+            this.content = item["content"]?.s() ?: ""
+            this.payload = item["payload"]?.m()?.mapValues { it.value.s() } ?: emptyMap()
+        }
     }
 
     fun deleteEvent(timestamp: Long, userId: String = "default-user") {
         try {
-            // Find items with this timestamp prefix in SK
             val prefix = "EVENT#$timestamp#"
             val expressionValues = mapOf(
                 ":pk" to "USER#$userId".toAV(),
