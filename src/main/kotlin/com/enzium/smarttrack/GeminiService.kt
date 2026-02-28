@@ -87,6 +87,7 @@ class GeminiService(
                 if (eventsNode.isArray) {
                     eventsNode.map { eventNode ->
                         LifeEvent().apply {
+                            userId = "default-user" // Force default user
                             type = eventNode.get("type")?.asText() ?: "NOTE"
                             content = eventNode.get("content")?.asText() ?: ""
                             payload = eventNode.get("payload")?.let { payloadNode ->

@@ -36,7 +36,7 @@ class LifeResource(
     @Path("/events/batch")
     @Blocking
     fun saveBatch(events: List<LifeEvent>): Response {
-        log.infof("Committing batch of %d events", events.size)
+        log.infof("Committing batch of %d events. First event content: %s", events.size, events.firstOrNull()?.content)
         eventService.addEvents(events)
         habitService.syncDailyProgress()
         return Response.status(Response.Status.CREATED).build()
