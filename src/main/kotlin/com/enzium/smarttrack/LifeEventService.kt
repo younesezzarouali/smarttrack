@@ -18,52 +18,33 @@ class LifeEventService(
     private fun Map<String, String>.toAV(): AttributeValue = 
         AttributeValue.builder().m(this.mapValues { it.value.toAV() }).build()
 
-    /**
-     * OPTIMIZATION: Uses BatchWriteItem instead of individual PutItem calls.
-     * Reduces the number of HTTP requests to AWS and improves performance.
-     */
     fun addEvents(events: List<LifeEvent>) {
         if (events.isEmpty()) return
-
-        try {
-            val writeRequests = events.mapIndexed { index, event ->
-                event.timestamp += index.toLong()
-                val items = mapOf(
-                    "userId" to event.userId.toAV(),
-                    "timestamp" to event.timestamp.toAV(),
-                    "type" to event.type.toAV(),
-                    "content" to event.content.toAV(),
-                    "payload" to event.payload.toAV()
-                )
-                WriteRequest.builder().putRequest(PutRequest.builder().item(items).build()).build()
-            }
-
-            // AWS Limit for BatchWriteItem is 25 items per request
-            writeRequests.chunked(25).forEach { chunk ->
-                val batchRequest = BatchWriteItemRequest.builder()
-                    .requestItems(mapOf(tableName to chunk))
-                    .build()
-                dynamoDbClient.batchWriteItem(batchRequest)
-            }
-            log.debugf("Batch saved %d events", events.size)
-        } catch (e: Exception) {
-            log.error("Batch write failed", e)
-            throw RuntimeException("Persistence error", e)
+        log.infof("Adding %d events...", events.size)
+        events.forEachIndexed { index, event ->
+            event.timestamp += index.toLong()
+            updateEvent(event)
         }
     }
 
     fun updateEvent(event: LifeEvent) {
         try {
-            val items = mapOf(
-                "userId" to event.userId.toAV(),
-                "timestamp" to event.timestamp.toAV(),
-                "type" to event.type.toAV(),
-                "content" to event.content.toAV(),
-                "payload" to event.payload.toAV()
-            )
-            dynamoDbClient.putItem(PutItemRequest.builder().tableName(tableName).item(items).build())
+            val items = mutableMapOf<String, AttributeValue>()
+            items["userId"] = event.userId.toAV()
+            items["timestamp"] = event.timestamp.toAV()
+            items["type"] = event.type.toAV()
+            items["content"] = event.content.toAV()
+            items["payload"] = event.payload.toAV()
+
+            val request = PutItemRequest.builder()
+                .tableName(tableName)
+                .item(items)
+                .build()
+
+            dynamoDbClient.putItem(request)
+            log.infof("Event saved successfully: %s", event.content)
         } catch (e: Exception) {
-            log.error("Update failed", e)
+            log.error("Failed to save event", e)
             throw RuntimeException(e)
         }
     }
@@ -77,16 +58,15 @@ class LifeEventService(
         }
     }
 
-    /**
-     * OPTIMIZATION: Use Query with limit and proper index scanning.
-     */
     fun listAll(userId: String = "default-user", limit: Int? = null, sinceTimestamp: Long? = null): List<LifeEvent> {
         val expressionValues = mutableMapOf(":v_userId" to userId.toAV())
         var condition = "userId = :v_userId"
         
+        val attributeNames = mutableMapOf<String, String>()
         if (sinceTimestamp != null) {
             condition += " AND #ts >= :since"
             expressionValues[":since"] = sinceTimestamp.toAV()
+            attributeNames["#ts"] = "timestamp"
         }
 
         val requestBuilder = QueryRequest.builder()
@@ -95,8 +75,8 @@ class LifeEventService(
             .expressionAttributeValues(expressionValues)
             .scanIndexForward(false)
 
-        if (sinceTimestamp != null) {
-            requestBuilder.expressionAttributeNames(mapOf("#ts" to "timestamp"))
+        if (attributeNames.isNotEmpty()) {
+            requestBuilder.expressionAttributeNames(attributeNames)
         }
 
         if (limit != null) {
@@ -104,7 +84,8 @@ class LifeEventService(
         }
 
         return try {
-            dynamoDbClient.query(requestBuilder.build()).items().map { mapToLifeEvent(it) }
+            val response = dynamoDbClient.query(requestBuilder.build())
+            response.items().map { mapToLifeEvent(it) }
         } catch (e: Exception) {
             log.error("Query failed", e)
             emptyList()
