@@ -15,10 +15,10 @@ class HabitResource(
     @GET
     @Blocking
     fun getHabits(): Map<String, Any> {
-        habitService.setupDefaultHabits() // Auto-init
+        habitService.setupDefaultHabits()
         val habits = habitService.getHabits()
-        val progress = habitService.getDailyProgress()
-        return mapOf("habits" to habits, "progress" to (progress ?: mapOf<String, Any>()))
+        val progress = habitService.getDailyProgress() ?: HabitProgress(userId = "default-user", date = "today")
+        return mapOf("habits" to habits, "progress" to progress)
     }
 
     @POST

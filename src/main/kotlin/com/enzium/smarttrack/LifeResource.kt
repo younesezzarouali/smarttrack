@@ -23,6 +23,10 @@ class LifeResource(
     @Blocking
     fun magic(input: Map<String, String>): Response {
         val text = input["text"] ?: throw BadRequestException("Input text is required")
+        
+        // Ensure habits are initialized for this user
+        habitService.setupDefaultHabits()
+        
         val history = eventService.listAll(limit = 50)
         val result = geminiService.interact(text, history)
         return Response.ok(result).build()
@@ -43,7 +47,7 @@ class LifeResource(
         calendar.set(Calendar.SECOND, 0)
         val startOfDay = calendar.timeInMillis
 
-        val todayEvents = eventService.listAll().filter { it.timestamp >= startOfDay }
+        val todayEvents = eventService.listAll(sinceTimestamp = startOfDay)
         val summary = geminiService.generateBriefing(todayEvents)
         return mapOf("briefing" to summary)
     }
@@ -52,9 +56,12 @@ class LifeResource(
     @Path("/events/batch")
     @Blocking
     fun saveBatch(events: List<LifeEvent>): Response {
+        log.infof("Saving batch of %d events", events.size)
         eventService.addEvents(events)
-        // AUTO-SYNC HABITS
+        
+        // CRITICAL: Sync habits after batch save
         habitService.syncDailyProgress()
+        
         return Response.status(Response.Status.CREATED).build()
     }
 
