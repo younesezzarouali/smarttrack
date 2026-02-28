@@ -26,20 +26,18 @@ class GeminiService(
 
     private val systemPromptTemplate: String by lazy {
         val stream: InputStream = Thread.currentThread().contextClassLoader.getResourceAsStream("prompts/gemini-system.txt")
-            ?: throw RuntimeException("Prompt definition missing")
+            ?: throw RuntimeException("Prompt definition missing in resources")
         stream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
     }
 
     fun interact(userInput: String, history: List<LifeEvent>): GeminiInteractionResponse {
         if (apiKey == "NO_KEY" || apiKey.isBlank()) throw RuntimeException("Gemini API Key is not configured")
 
-        // Format history for the AI
-        val historyContext = history.joinToString("\n") { 
-            "- [${it.type}] ${it.content} (${it.payload})"
-        }
+        val historyContext = if (history.isEmpty()) "Aucun historique" 
+            else history.joinToString("\n") { "- [${it.type}] ${it.content} (${it.payload})" }
 
         val prompt = systemPromptTemplate
-            .replace("{{CONTEXT}}", if (historyContext.isEmpty()) "Aucun historique" else historyContext)
+            .replace("{{CONTEXT}}", historyContext)
             .replace("{{INPUT}}", userInput)
         
         val request = GeminiRequest(
@@ -61,39 +59,48 @@ class GeminiService(
             } catch (e: Exception) {
                 lastException = e
                 if (e.message?.contains("429") == true && attempt < maxAttempts) {
+                    log.warnf("Gemini Rate Limit hit. Retry %d/%d...", attempt, maxAttempts)
                     TimeUnit.SECONDS.sleep(2)
                     continue
                 }
                 break
             }
         }
-        throw RuntimeException("AI Service busy", lastException)
+        throw RuntimeException("AI Service temporarily unavailable: ${lastException?.message}", lastException)
     }
 
     private fun parseInteractionResponse(response: GeminiResponse): GeminiInteractionResponse {
         val jsonString = response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text
             ?: throw RuntimeException("AI returned an empty response")
         
-        log.debugf("Gemini Output: %s", jsonString)
+        log.debugf("Gemini Raw Output: %s", jsonString)
         
         return try {
-            val raw: Map<String, Any> = mapper.readValue(jsonString, object : TypeReference<Map<String, Any>>() {})
+            val node = mapper.readTree(jsonString)
+            val intent = node.get("intent")?.asText() ?: "CAPTURE"
+            val answer = node.get("answer")?.asText()
             
-            val intent = raw["intent"]?.toString() ?: "CAPTURE"
-            val answer = raw["answer"]?.toString()
-            
-            val events = (raw["events"] as? List<Map<String, Any>>)?.map { eventMap ->
-                LifeEvent().apply {
-                    type = eventMap["type"]?.toString() ?: "NOTE"
-                    content = eventMap["content"]?.toString() ?: ""
-                    val rawPayload = eventMap["payload"] as? Map<*, *>
-                    payload = rawPayload?.entries?.associate { it.key.toString() to it.value.toString() } ?: emptyMap()
+            val eventsNode = node.get("events")
+            val events = if (eventsNode != null && eventsNode.isArray) {
+                eventsNode.map { eventNode ->
+                    LifeEvent().apply {
+                        type = eventNode.get("type")?.asText() ?: "NOTE"
+                        content = eventNode.get("content")?.asText() ?: ""
+                        val payloadNode = eventNode.get("payload")
+                        payload = if (payloadNode != null && payloadNode.isObject) {
+                            val payloadMap = mutableMapOf<String, String>()
+                            payloadNode.fields().forEach { entry ->
+                                payloadMap[entry.key] = entry.value.asText()
+                            }
+                            payloadMap
+                        } else emptyMap()
+                    }
                 }
-            }
+            } else null
 
             GeminiInteractionResponse(intent, answer, events)
         } catch (e: Exception) {
-            log.error("Failed to parse AI output", e)
+            log.error("Failed to parse AI output JSON", e)
             throw RuntimeException("Structural error in AI response", e)
         }
     }
