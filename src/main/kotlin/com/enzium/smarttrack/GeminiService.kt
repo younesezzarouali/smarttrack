@@ -109,12 +109,15 @@ class GeminiService(
         val jsonString = response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text
             ?: throw RuntimeException("AI returned an empty response")
         
-        log.infof("Gemini Raw Output: %s", jsonString)
+        log.debugf("Gemini Raw Output: %s", jsonString)
         
         return try {
             val node = mapper.readTree(jsonString)
             val intent = node.get("intent")?.asText() ?: "CAPTURE"
-            val answer = node.get("answer")?.asText()
+            
+            // Fix: avoid returning string "null"
+            val answerNode = node.get("answer")
+            val answer = if (answerNode != null && !answerNode.isNull) answerNode.asText() else null
             
             val eventsNode = node.get("events")
             val events = if (eventsNode != null && eventsNode.isArray) {
