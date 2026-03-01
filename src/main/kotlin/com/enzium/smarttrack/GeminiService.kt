@@ -13,6 +13,7 @@ import java.util.concurrent.TimeUnit
 data class GeminiInteractionResponse(
     val intent: String,
     val dailyInsight: String? = null,
+    val answer: String? = null, // Ajout pour le Frontend
     val events: List<LifeEvent> = emptyList(),
     val habitUpdates: List<HabitUpdateIntent> = emptyList(),
     val habitCreations: List<HabitCreationIntent> = emptyList()
@@ -41,7 +42,7 @@ class GeminiService(
             else habits.joinToString("\n") { "- ID: ${it.id}, Name: ${it.name}, Category: ${it.category}" }
 
         val historyContext = if (history.isEmpty()) "Aucun historique" 
-            else history.take(20).joinToString("\n") { "- [${it.type}] ${it.content}" }
+            else history.joinToString("\n") { "- [${it.type}] ${it.content}: ${it.fullDescription}" }
 
         val prompt = systemPromptTemplate
             .replace("{{HABITS}}", habitsContext)
@@ -92,7 +93,6 @@ class GeminiService(
                     updatesNode.mapTo(habitUpdates) { updateNode ->
                         val hName = updateNode.get("habitName")?.asText()
                         val hId = updateNode.get("habitId")?.asText()
-                        // Resolve ID if AI only gave name
                         val resolvedId = hId ?: habits.find { it.name.contains(hName ?: "---", ignoreCase = true) }?.id
                         
                         HabitUpdateIntent(
@@ -117,7 +117,6 @@ class GeminiService(
                             val pMap = mutableMapOf<String, String>()
                             eventNode.get("payload")?.fields()?.forEach { pMap[it.key] = it.value.asText() }
                             
-                            // LINKING LOGIC: If this event matches a habit update, tag it with habitId
                             val matchingUpdate = habitUpdates.find { content.contains(it.habitName ?: "---", ignoreCase = true) }
                             if (matchingUpdate?.habitId != null) {
                                 pMap["linkedHabitId"] = matchingUpdate.habitId
@@ -129,25 +128,13 @@ class GeminiService(
                 }
             }
 
-            // Fallback synthesis
-            habitUpdates.forEach { update ->
-                val alreadyLinked = events.any { it.payload["linkedHabitId"] == update.habitId }
-                if (!alreadyLinked && update.progressDelta > 0 && update.habitId != null) {
-                    val habit = habits.find { it.id == update.habitId }
-                    events.add(LifeEvent().apply {
-                        userId = "default-user"
-                        type = habit?.category ?: "HEALTH"
-                        content = habit?.name ?: "Activity"
-                        payload = mapOf(
-                            "duration_min" to update.progressDelta.toString(),
-                            "linkedHabitId" to update.habitId,
-                            "sentiment" to "POSITIVE"
-                        )
-                    })
-                }
-            }
-
-            GeminiInteractionResponse(intent, dailyInsight, events, habitUpdates)
+            GeminiInteractionResponse(
+                intent = intent, 
+                dailyInsight = dailyInsight, 
+                answer = dailyInsight, // Copie pour le Front
+                events = events, 
+                habitUpdates = habitUpdates
+            )
         } catch (e: Exception) {
             log.error("Failed to parse AI JSON", e)
             throw RuntimeException("AI format error")

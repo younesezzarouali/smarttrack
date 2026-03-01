@@ -17,22 +17,29 @@ class UnifiedRepository(private val dynamoDbClient: DynamoDbClient) {
     private fun Boolean.toAV() = AttributeValue.builder().bool(this).build()
     private fun List<Double>.toAV() = AttributeValue.builder().l(this.map { it.toAV() }).build()
 
-    // --- EVENTS (Base Operations) ---
+    // --- EVENTS ---
 
     fun saveEvent(userId: String, event: LifeEvent) {
-        val sk = "EVENT#${event.timestamp}#${UUID.randomUUID().toString().take(8)}"
-        val item = mutableMapOf(
-            "pk" to "USER#$userId".toAV(),
-            "sk" to sk.toAV(),
-            "type" to event.type.toAV(),
-            "content" to event.content.toAV(),
-            "fullDescription" to event.fullDescription.toAV(),
-            "payload" to AttributeValue.builder().m(event.payload.mapValues { it.value.toAV() }).build()
-        )
-        
-        event.embedding?.let { item["embedding"] = it.toAV() }
-        
-        dynamoDbClient.putItem(PutItemRequest.builder().tableName(tableName).item(item).build())
+        try {
+            val sk = "EVENT#${event.timestamp}#${UUID.randomUUID().toString().take(8)}"
+            
+            val item = mutableMapOf(
+                "pk" to "USER#$userId".toAV(),
+                "sk" to sk.toAV(),
+                "type" to (event.type ?: "NOTE").toAV(),
+                "content" to (event.content ?: "").toAV(),
+                "fullDescription" to (event.fullDescription ?: event.content ?: "").toAV(),
+                "payload" to AttributeValue.builder().m(event.payload.mapValues { it.value.toAV() }).build()
+            )
+            
+            event.embedding?.let { item["embedding"] = it.toAV() }
+            
+            dynamoDbClient.putItem(PutItemRequest.builder().tableName(tableName).item(item).build())
+            log.infof("DB: Event successfully saved: %s", event.content)
+        } catch (e: Exception) {
+            log.error("DB: Failed to save event", e)
+            throw e
+        }
     }
 
     fun queryEvents(userId: String, limit: Int? = null, sinceTimestamp: Long? = null): List<LifeEvent> {
@@ -62,7 +69,7 @@ class UnifiedRepository(private val dynamoDbClient: DynamoDbClient) {
             val response = dynamoDbClient.query(requestBuilder.build())
             response.items().mapNotNull { mapToLifeEvent(it) }
         } catch (e: Exception) {
-            log.error("Query failed in Repository", e)
+            log.error("DB: Query failed", e)
             emptyList()
         }
     }
@@ -84,7 +91,7 @@ class UnifiedRepository(private val dynamoDbClient: DynamoDbClient) {
                 dynamoDbClient.deleteItem(DeleteItemRequest.builder().tableName(tableName).key(key).build())
             }
         } catch (e: Exception) {
-            log.error("Delete failed", e)
+            log.error("DB: Delete failed", e)
         }
     }
 
@@ -101,12 +108,12 @@ class UnifiedRepository(private val dynamoDbClient: DynamoDbClient) {
             this.content = item["content"]?.s() ?: ""
             this.fullDescription = item["fullDescription"]?.s() ?: this.content
             this.payload = item["payload"]?.m()?.mapValues { it.value.s() } ?: emptyMap()
-            this.embedding = item["embedding"]?.l()?.map { it.n().toDouble() }
+            // On le charge pour le RAG (mais il sera ignoré dans le JSON final pour le front)
+            this.embedding = item["embedding"]?.l()?.mapNotNull { it.n().toDoubleOrNull() }
         }
     }
 
-    // --- HABITS (Base Operations) ---
-
+    // --- HABITS ---
     fun getActiveHabits(userId: String): List<Habit> {
         val request = QueryRequest.builder()
             .tableName(tableName)

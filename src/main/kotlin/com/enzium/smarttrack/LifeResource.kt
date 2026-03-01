@@ -65,7 +65,8 @@ class LifeResource(
     @Path("/events")
     @Blocking
     fun list(): List<LifeEvent> {
-        return eventService.listAll(limit = 100)
+        // On récupère les 100 derniers et on s'assure qu'ils sont triés par le plus récent d'abord
+        return eventService.listAll(limit = 100).sortedByDescending { it.timestamp }
     }
 
     @DELETE

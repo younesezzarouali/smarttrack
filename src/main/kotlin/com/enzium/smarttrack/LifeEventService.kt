@@ -15,16 +15,12 @@ class LifeEventService(
         if (events.isEmpty()) return
         
         events.forEachIndexed { index, event ->
-            // Enrichir avec l'embedding si manquant
             if (event.embedding == null) {
                 val textToEmbed = if (event.fullDescription.isNotBlank()) event.fullDescription else event.content
                 event.embedding = embeddingService.getEmbedding(textToEmbed)
             }
-            
-            // Assurer le timestamp unique
             val baseTs = if (event.timestamp > 0) event.timestamp else System.currentTimeMillis()
             event.timestamp = baseTs + index.toLong()
-            
             repository.saveEvent(userId, event)
         }
     }
@@ -41,25 +37,32 @@ class LifeEventService(
         listAll(userId).forEach { deleteEvent(it.timestamp, userId) }
     }
 
-    /**
-     * Recherche sémantique (RAG) pour trouver les souvenirs pertinents.
-     */
     fun findRelevantEvents(query: String, userId: String = "default-user", limit: Int = 10): List<LifeEvent> {
+        log.infof("RAG: Searching memories for: %s", query)
         val queryEmbedding = embeddingService.getEmbedding(query)
-        if (queryEmbedding.isEmpty()) return emptyList()
+        if (queryEmbedding.isEmpty()) {
+            log.warn("RAG: Could not generate embedding for query")
+            return emptyList()
+        }
 
-        // On cherche dans les 300 derniers événements
-        val allEvents = listAll(userId, limit = 300)
+        val allEvents = listAll(userId, limit = 500) // On cherche un peu plus large
+        log.infof("RAG: Analyzing %d total events from DB", allEvents.size)
         
-        return allEvents
+        val results = allEvents
             .filter { it.embedding != null }
             .map { event -> 
                 val score = embeddingService.cosineSimilarity(queryEmbedding, event.embedding!!)
                 event to score
             }
-            .filter { it.second > 0.65 } // Seuil de ressemblance
+            .filter { it.second > 0.45 } // Seuil baissé à 45% pour plus de rappel
             .sortedByDescending { it.second }
             .take(limit)
-            .map { it.first }
+
+        log.infof("RAG: Found %d relevant memories above threshold", results.size)
+        results.forEach { (event, score) -> 
+            log.debugf("RAG Match [%.2f]: %s", score, event.content)
+        }
+
+        return results.map { it.first }
     }
 }
