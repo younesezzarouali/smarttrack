@@ -1,4 +1,4 @@
-name: Build & Deploy Quarkus Lambda via S3
+name: Build & Deploy Quarkus Lambda via S3 (JVM - FAST)
 
 on:
   push:
@@ -19,25 +19,26 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # 2️⃣ Setup JDK 21
+      # 2️⃣ Setup JDK 21 (Standard, pas besoin de GraalVM)
       - name: Setup JDK 21
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: 21
+          distribution: 'temurin'
+          java-version: '21'
 
-      # 3️⃣ Cache Maven (accélère les builds)
+      # 3️⃣ Cache Maven
       - name: Cache Maven
         uses: actions/cache@v4
         with:
           path: ~/.m2/repository
-          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          key: ${{ runner.os }}-maven-jvm-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
-            ${{ runner.os }}-maven-
+            ${{ runner.os }}-maven-jvm-
 
-      # 4️⃣ Build Quarkus en mode JVM (pas natif)
+      # 4️⃣ Build Quarkus en mode JVM (Rapide : ~30s)
       - name: Build Quarkus app
         run: mvn clean package -DskipTests
+        working-directory: smarttrack
 
       # 5️⃣ Configure AWS credentials
       - name: Configure AWS credentials
@@ -50,7 +51,7 @@ jobs:
       # 6️⃣ Upload ZIP vers S3
       - name: Upload to S3 (overwrite previous build)
         run: |
-          ZIP_FILE="target/function.zip"
+          ZIP_FILE="smarttrack/target/function.zip"
           echo "Uploading $ZIP_FILE to s3://${{ env.S3_BUCKET }}/function.zip"
           aws s3 cp "$ZIP_FILE" "s3://${{ env.S3_BUCKET }}/function.zip" --region ${{ env.AWS_REGION }}
 

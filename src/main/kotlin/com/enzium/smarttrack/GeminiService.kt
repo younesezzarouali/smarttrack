@@ -111,6 +111,7 @@ class GeminiService(
                             userId = "default-user"
                             type = eventNode.get("type")?.asText() ?: "NOTE"
                             content = eventNode.get("content")?.asText() ?: ""
+                            fullDescription = eventNode.get("fullDescription")?.asText() ?: content
                             val pMap = mutableMapOf<String, String>()
                             eventNode.get("payload")?.fields()?.forEach { pMap[it.key] = it.value.asText() }
                             

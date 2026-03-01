@@ -9,11 +9,18 @@ import org.eclipse.microprofile.rest.client.inject.RegisterRestClient
 interface GeminiApiClient {
 
     @POST
-    @Path(":generateContent")
+    @Path("/v1beta/models/gemini-2.0-flash:generateContent")
     fun generateContent(
         @QueryParam("key") apiKey: String,
         request: GeminiRequest
     ): GeminiResponse
+
+    @POST
+    @Path("/v1beta/models/gemini-embedding-001:embedContent")
+    fun embedContent(
+        @QueryParam("key") apiKey: String,
+        request: GeminiEmbedRequest
+    ): GeminiEmbedResponse
 }
 
 data class GeminiRequest(
@@ -22,7 +29,7 @@ data class GeminiRequest(
 )
 
 data class Content(
-    val role: String,
+    val role: String? = null,
     val parts: List<Part>
 )
 
@@ -40,4 +47,23 @@ data class GeminiResponse(
 
 data class Candidate(
     val content: Content
+)
+
+// --- RAG / Embedding Models ---
+
+data class GeminiEmbedRequest(
+    val model: String = "models/gemini-embedding-001",
+    val content: EmbeddingContent
+)
+
+data class EmbeddingContent(
+    val parts: List<Part>
+)
+
+data class GeminiEmbedResponse(
+    val embedding: EmbeddingValue
+)
+
+data class EmbeddingValue(
+    val values: List<Double>
 )

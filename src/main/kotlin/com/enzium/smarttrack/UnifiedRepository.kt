@@ -15,8 +15,10 @@ class UnifiedRepository(private val dynamoDbClient: DynamoDbClient) {
     private fun Long.toAV() = AttributeValue.builder().n(this.toString()).build()
     private fun Double.toAV() = AttributeValue.builder().n(this.toString()).build()
     private fun Boolean.toAV() = AttributeValue.builder().bool(this).build()
+    private fun List<Double>.toAV() = AttributeValue.builder().l(this.map { it.toAV() }).build()
 
-    // --- EVENTS ---
+    // --- EVENTS (Base Operations) ---
+
     fun saveEvent(userId: String, event: LifeEvent) {
         val sk = "EVENT#${event.timestamp}#${UUID.randomUUID().toString().take(8)}"
         val item = mutableMapOf(
@@ -24,12 +26,87 @@ class UnifiedRepository(private val dynamoDbClient: DynamoDbClient) {
             "sk" to sk.toAV(),
             "type" to event.type.toAV(),
             "content" to event.content.toAV(),
+            "fullDescription" to event.fullDescription.toAV(),
             "payload" to AttributeValue.builder().m(event.payload.mapValues { it.value.toAV() }).build()
         )
+        
+        event.embedding?.let { item["embedding"] = it.toAV() }
+        
         dynamoDbClient.putItem(PutItemRequest.builder().tableName(tableName).item(item).build())
     }
 
-    // --- HABITS ---
+    fun queryEvents(userId: String, limit: Int? = null, sinceTimestamp: Long? = null): List<LifeEvent> {
+        val expressionValues = mutableMapOf<String, AttributeValue>()
+        expressionValues[":pk"] = "USER#$userId".toAV()
+        
+        var condition = "pk = :pk"
+        
+        if (sinceTimestamp != null) {
+            condition += " AND sk BETWEEN :sk_start AND :sk_end"
+            expressionValues[":sk_start"] = "EVENT#$sinceTimestamp".toAV()
+            expressionValues[":sk_end"] = "EVENT#z".toAV()
+        } else {
+            condition += " AND begins_with(sk, :sk_prefix)"
+            expressionValues[":sk_prefix"] = "EVENT#".toAV()
+        }
+
+        val requestBuilder = QueryRequest.builder()
+            .tableName(tableName)
+            .keyConditionExpression(condition)
+            .expressionAttributeValues(expressionValues)
+            .scanIndexForward(false)
+
+        if (limit != null) requestBuilder.limit(limit)
+
+        return try {
+            val response = dynamoDbClient.query(requestBuilder.build())
+            response.items().mapNotNull { mapToLifeEvent(it) }
+        } catch (e: Exception) {
+            log.error("Query failed in Repository", e)
+            emptyList()
+        }
+    }
+
+    fun deleteEvent(userId: String, timestamp: Long) {
+        try {
+            val prefix = "EVENT#$timestamp#"
+            val query = QueryRequest.builder()
+                .tableName(tableName)
+                .keyConditionExpression("pk = :pk AND begins_with(sk, :sk)")
+                .expressionAttributeValues(mapOf(
+                    ":pk" to "USER#$userId".toAV(),
+                    ":sk" to prefix.toAV()
+                ))
+                .build()
+            
+            dynamoDbClient.query(query).items().forEach { item ->
+                val key = mapOf("pk" to item["pk"]!!, "sk" to item["sk"]!!)
+                dynamoDbClient.deleteItem(DeleteItemRequest.builder().tableName(tableName).key(key).build())
+            }
+        } catch (e: Exception) {
+            log.error("Delete failed", e)
+        }
+    }
+
+    private fun mapToLifeEvent(item: Map<String, AttributeValue>): LifeEvent? {
+        val sk = item["sk"]?.s() ?: return null
+        if (!sk.startsWith("EVENT#")) return null
+        
+        val timestamp = sk.split("#").getOrNull(1)?.toLongOrNull() ?: return null
+        
+        return LifeEvent().apply {
+            this.userId = item["pk"]?.s()?.removePrefix("USER#") ?: "default-user"
+            this.timestamp = timestamp
+            this.type = item["type"]?.s() ?: "NOTE"
+            this.content = item["content"]?.s() ?: ""
+            this.fullDescription = item["fullDescription"]?.s() ?: this.content
+            this.payload = item["payload"]?.m()?.mapValues { it.value.s() } ?: emptyMap()
+            this.embedding = item["embedding"]?.l()?.map { it.n().toDouble() }
+        }
+    }
+
+    // --- HABITS (Base Operations) ---
+
     fun getActiveHabits(userId: String): List<Habit> {
         val request = QueryRequest.builder()
             .tableName(tableName)
@@ -43,7 +120,7 @@ class UnifiedRepository(private val dynamoDbClient: DynamoDbClient) {
         return try {
             dynamoDbClient.query(request).items()
                 .map { mapToHabit(it) }
-                .filter { it.active } // Filter active only
+                .filter { it.active } 
         } catch (e: Exception) {
             log.error("Failed to query habits", e)
             emptyList()
@@ -68,25 +145,14 @@ class UnifiedRepository(private val dynamoDbClient: DynamoDbClient) {
     }
 
     fun archiveHabit(userId: String, habitId: String) {
-        // Soft delete: set active = false
-        val key = mapOf(
-            "pk" to "USER#$userId".toAV(),
-            "sk" to "HABIT#$habitId".toAV()
-        )
-        
+        val key = mapOf("pk" to "USER#$userId".toAV(), "sk" to "HABIT#$habitId".toAV())
         val updateRequest = UpdateItemRequest.builder()
             .tableName(tableName)
             .key(key)
             .updateExpression("SET active = :active")
             .expressionAttributeValues(mapOf(":active" to false.toAV()))
             .build()
-
-        try {
-            dynamoDbClient.updateItem(updateRequest)
-        } catch (e: Exception) {
-            log.error("Failed to archive habit $habitId", e)
-            throw RuntimeException("Archive failed", e)
-        }
+        dynamoDbClient.updateItem(updateRequest)
     }
 
     private fun mapToHabit(item: Map<String, AttributeValue>): Habit {

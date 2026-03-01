@@ -2,131 +2,64 @@ package com.enzium.smarttrack
 
 import jakarta.enterprise.context.ApplicationScoped
 import org.jboss.logging.Logger
-import software.amazon.awssdk.services.dynamodb.DynamoDbClient
-import software.amazon.awssdk.services.dynamodb.model.*
 import java.util.UUID
 
 @ApplicationScoped
 class LifeEventService(
-    private val dynamoDbClient: DynamoDbClient
+    private val repository: UnifiedRepository,
+    private val embeddingService: EmbeddingService
 ) {
     private val log: Logger = Logger.getLogger(LifeEventService::class.java)
-    private val tableName = "SmartTrack"
 
-    private fun String.toAV(): AttributeValue = AttributeValue.builder().s(this).build()
-    private fun Long.toAV(): AttributeValue = AttributeValue.builder().n(this.toString()).build()
-    private fun Map<String, String>.toAV(): AttributeValue = 
-        AttributeValue.builder().m(this.mapValues { it.value.toAV() }).build()
-
-    fun addEvents(events: List<LifeEvent>) {
+    fun addEvents(events: List<LifeEvent>, userId: String = "default-user") {
         if (events.isEmpty()) return
-        log.infof("Batch saving %d events...", events.size)
+        
         events.forEachIndexed { index, event ->
+            // Enrichir avec l'embedding si manquant
+            if (event.embedding == null) {
+                val textToEmbed = if (event.fullDescription.isNotBlank()) event.fullDescription else event.content
+                event.embedding = embeddingService.getEmbedding(textToEmbed)
+            }
+            
+            // Assurer le timestamp unique
             val baseTs = if (event.timestamp > 0) event.timestamp else System.currentTimeMillis()
             event.timestamp = baseTs + index.toLong()
-            saveToDb(event)
-        }
-    }
-
-    fun saveToDb(event: LifeEvent) {
-        try {
-            val userId = if (event.userId.isNullOrBlank()) "default-user" else event.userId
-            val sk = "EVENT#${event.timestamp}#${UUID.randomUUID().toString().take(4)}"
             
-            val item = mutableMapOf(
-                "pk" to "USER#$userId".toAV(),
-                "sk" to sk.toAV(),
-                "type" to event.type.toAV(),
-                "content" to event.content.toAV(),
-                "payload" to event.payload.toAV()
-            )
-
-            dynamoDbClient.putItem(PutItemRequest.builder().tableName(tableName).item(item).build())
-            log.infof("Event saved: %s", event.content)
-        } catch (e: Exception) {
-            log.error("Failed to save event", e)
-            throw RuntimeException("Persistence failed", e)
+            repository.saveEvent(userId, event)
         }
     }
 
     fun listAll(userId: String = "default-user", limit: Int? = null, sinceTimestamp: Long? = null): List<LifeEvent> {
-        val expressionValues = mutableMapOf<String, AttributeValue>()
-        expressionValues[":pk"] = "USER#$userId".toAV()
-        
-        // CRITICAL FIX: Ensure we only get EVENT# items by using BETWEEN 
-        // or a strict prefix check to avoid matching SNAP# or HABIT#
-        var condition = "pk = :pk"
-        
-        if (sinceTimestamp != null) {
-            // Range: from EVENT#timestamp to EVENT#z (z is higher than any number)
-            condition += " AND sk BETWEEN :sk_start AND :sk_end"
-            expressionValues[":sk_start"] = "EVENT#$sinceTimestamp".toAV()
-            expressionValues[":sk_end"] = "EVENT#z".toAV()
-        } else {
-            condition += " AND begins_with(sk, :sk_prefix)"
-            expressionValues[":sk_prefix"] = "EVENT#".toAV()
-        }
-
-        val requestBuilder = QueryRequest.builder()
-            .tableName(tableName)
-            .keyConditionExpression(condition)
-            .expressionAttributeValues(expressionValues)
-            .scanIndexForward(false)
-
-        if (limit != null) {
-            requestBuilder.limit(limit)
-        }
-
-        return try {
-            val response = dynamoDbClient.query(requestBuilder.build())
-            response.items()
-                .mapNotNull { mapToLifeEvent(it) } // Filter out any malformed entries
-        } catch (e: Exception) {
-            log.error("Query failed in LifeEventService", e)
-            emptyList()
-        }
-    }
-
-    private fun mapToLifeEvent(item: Map<String, AttributeValue>): LifeEvent? {
-        val sk = item["sk"]?.s() ?: return null
-        if (!sk.startsWith("EVENT#")) return null
-        
-        val skParts = sk.split("#")
-        val timestamp = skParts.getOrNull(1)?.toLongOrNull() ?: return null
-        
-        return LifeEvent().apply {
-            this.userId = item["pk"]?.s()?.removePrefix("USER#") ?: "default-user"
-            this.timestamp = timestamp
-            this.type = item["type"]?.s() ?: "NOTE"
-            this.content = item["content"]?.s() ?: ""
-            this.payload = item["payload"]?.m()?.mapValues { it.value.s() } ?: emptyMap()
-        }
+        return repository.queryEvents(userId, limit, sinceTimestamp)
     }
 
     fun deleteEvent(timestamp: Long, userId: String = "default-user") {
-        try {
-            val prefix = "EVENT#$timestamp#"
-            val expressionValues = mapOf(
-                ":pk" to "USER#$userId".toAV(),
-                ":sk" to prefix.toAV()
-            )
-            val query = QueryRequest.builder()
-                .tableName(tableName)
-                .keyConditionExpression("pk = :pk AND begins_with(sk, :sk)")
-                .expressionAttributeValues(expressionValues)
-                .build()
-            
-            val results = dynamoDbClient.query(query).items()
-            results.forEach { item ->
-                val key = mapOf("pk" to item["pk"]!!, "sk" to item["sk"]!!)
-                dynamoDbClient.deleteItem(DeleteItemRequest.builder().tableName(tableName).key(key).build())
-            }
-        } catch (e: Exception) {
-            log.error("Delete failed", e)
-        }
+        repository.deleteEvent(userId, timestamp)
     }
 
     fun clearAll(userId: String = "default-user") {
         listAll(userId).forEach { deleteEvent(it.timestamp, userId) }
+    }
+
+    /**
+     * Recherche sémantique (RAG) pour trouver les souvenirs pertinents.
+     */
+    fun findRelevantEvents(query: String, userId: String = "default-user", limit: Int = 10): List<LifeEvent> {
+        val queryEmbedding = embeddingService.getEmbedding(query)
+        if (queryEmbedding.isEmpty()) return emptyList()
+
+        // On cherche dans les 300 derniers événements
+        val allEvents = listAll(userId, limit = 300)
+        
+        return allEvents
+            .filter { it.embedding != null }
+            .map { event -> 
+                val score = embeddingService.cosineSimilarity(queryEmbedding, event.embedding!!)
+                event to score
+            }
+            .filter { it.second > 0.65 } // Seuil de ressemblance
+            .sortedByDescending { it.second }
+            .take(limit)
+            .map { it.first }
     }
 }

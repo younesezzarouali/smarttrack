@@ -23,12 +23,21 @@ class LifeResource(
     @Blocking
     fun magic(input: Map<String, String>): Response {
         val text = input["text"] ?: throw BadRequestException("Input text required")
-        log.infof("AI Interaction request: %s", text)
+        log.infof("AI Interaction request (RAG enabled): %s", text)
         
-        val history = eventService.listAll(limit = 20)
+        // 🧠 RAG : Recherche de souvenirs sémantiques
+        val relevantMemories = eventService.findRelevantEvents(text)
+        
+        // 🕰️ Historique chronologique récent
+        val recentHistory = eventService.listAll(limit = 15)
+        
+        // 🔗 Fusion intelligente sans doublons
+        val fullHistoryContext = (relevantMemories + recentHistory).distinctBy { it.timestamp }
+        
         val activeHabits = habitService.getHabits()
         
-        val result = geminiService.interact(text, history, activeHabits)
+        // Délégation à l'IA
+        val result = geminiService.interact(text, fullHistoryContext, activeHabits)
         return Response.ok(result).build()
     }
 
@@ -36,7 +45,8 @@ class LifeResource(
     @Path("/events/batch")
     @Blocking
     fun saveBatch(events: List<LifeEvent>): Response {
-        log.infof("Committing batch of %d events. First event content: %s", events.size, events.firstOrNull()?.content)
+        log.infof("Committing batch of %d events.", events.size)
+        // Le service gère maintenant le calcul des embeddings automatiquement
         eventService.addEvents(events)
         habitService.syncDailyProgress()
         return Response.status(Response.Status.CREATED).build()
@@ -46,29 +56,9 @@ class LifeResource(
     @Path("/briefing")
     @Blocking
     fun getBriefing(@QueryParam("timezoneOffset") offsetMinutes: Int?): Map<String, String> {
-        val now = Instant.now()
-        val calendar = Calendar.getInstance()
-        calendar.timeInMillis = now.toEpochMilli()
-        if (offsetMinutes != null) calendar.add(Calendar.MINUTE, -offsetMinutes)
-        calendar.set(Calendar.HOUR_OF_DAY, 0)
-        calendar.set(Calendar.MINUTE, 0)
-        calendar.set(Calendar.SECOND, 0)
-        
-        val startOfDay = calendar.timeInMillis
-        val todayEvents = eventService.listAll(sinceTimestamp = startOfDay)
-        
+        val todayEvents = listEventsForToday(offsetMinutes)
         val summary = geminiService.generateBriefing(todayEvents)
         return mapOf("briefing" to summary)
-    }
-
-    @PUT
-    @Path("/events")
-    @Blocking
-    fun update(event: LifeEvent): Response {
-        log.infof("Updating existing event: %s", event.content)
-        eventService.saveToDb(event)
-        habitService.syncDailyProgress()
-        return Response.ok(event).build()
     }
 
     @GET
@@ -82,7 +72,6 @@ class LifeResource(
     @Path("/events/{timestamp}")
     @Blocking
     fun delete(@PathParam("timestamp") timestamp: Long): Response {
-        log.infof("Deleting event at timestamp: %d", timestamp)
         eventService.deleteEvent(timestamp)
         habitService.syncDailyProgress()
         return Response.noContent().build()
@@ -95,5 +84,14 @@ class LifeResource(
         eventService.clearAll()
         habitService.syncDailyProgress()
         return Response.noContent().build()
+    }
+
+    private fun listEventsForToday(offsetMinutes: Int?): List<LifeEvent> {
+        val calendar = Calendar.getInstance()
+        if (offsetMinutes != null) calendar.add(Calendar.MINUTE, -offsetMinutes)
+        calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        return eventService.listAll(sinceTimestamp = calendar.timeInMillis)
     }
 }
