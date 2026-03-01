@@ -21,6 +21,8 @@ data class GeminiInteractionResponse(
 @ApplicationScoped
 class GeminiService(
     @ConfigProperty(name = "gemini.api.key") private val apiKey: String,
+    @ConfigProperty(name = "gemini.model.chat") private val chatModel: String,
+    @ConfigProperty(name = "gemini.api.version") private val apiVersion: String,
     @RestClient private val geminiApi: GeminiApiClient,
     private val mapper: ObjectMapper
 ) {
@@ -52,7 +54,7 @@ class GeminiService(
         )
 
         return executeWithRetry(3) {
-            val response = geminiApi.generateContent(apiKey, request)
+            val response = geminiApi.generateContent(apiKey, apiVersion, chatModel, request)
             parseInteractionResponse(response, habits)
         }
     }

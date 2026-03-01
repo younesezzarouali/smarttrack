@@ -8,6 +8,8 @@ import org.jboss.logging.Logger
 @ApplicationScoped
 class EmbeddingService(
     @ConfigProperty(name = "gemini.api.key") private val apiKey: String,
+    @ConfigProperty(name = "gemini.model.embedding") private val embeddingModel: String,
+    @ConfigProperty(name = "gemini.api.version") private val apiVersion: String,
     @RestClient private val geminiApi: GeminiApiClient
 ) {
     private val log: Logger = Logger.getLogger(EmbeddingService::class.java)
@@ -19,7 +21,7 @@ class EmbeddingService(
             val request = GeminiEmbedRequest(
                 content = EmbeddingContent(parts = listOf(Part(text = text)))
             )
-            val response = geminiApi.embedContent(apiKey, request)
+            val response = geminiApi.embedContent(apiKey, apiVersion, embeddingModel, request)
             response.embedding.values
         } catch (e: Exception) {
             log.error("Failed to get embedding from Gemini", e)
