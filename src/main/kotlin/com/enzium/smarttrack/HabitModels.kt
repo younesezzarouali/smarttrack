@@ -9,10 +9,12 @@ data class Habit(
     var name: String = "",
     var type: String = "TIME", // TIME, COUNT, BOOLEAN
     var targetValue: Double = 0.0,
-    var unit: String = "",
+    var unit: String = "min",
     var frequency: String = "DAILY",
     var category: String = "HEALTH",
-    var streak: Int = 0,
+    var currentStreak: Int = 0,
+    var longestStreak: Int = 0,
+    var priority: Int = 2, // 1 (High), 2 (Medium), 3 (Low)
     var lastCompletedDate: String = "",
     var active: Boolean = true,
     var createdAt: Long = System.currentTimeMillis()
@@ -24,6 +26,14 @@ data class HabitProgress(
     var date: String = "", // Format: YYYY-MM-DD
     var progressMap: Map<String, Double> = mutableMapOf(), // habitId -> currentValue
     var completedIds: List<String> = emptyList()
+)
+
+@RegisterForReflection
+data class HabitLogRequest(
+    val date: String = "",
+    val delta: Double = 0.0,
+    val unit: String = "min",
+    val source: String = "manual"
 )
 
 @RegisterForReflection
@@ -53,7 +63,8 @@ data class HabitCreationIntent(
     val type: String = "TIME",
     val target: Double = 0.0,
     val category: String = "HEALTH",
-    val frequency: String = "DAILY"
+    val frequency: String = "DAILY",
+    val priority: Int = 2
 )
 
 @RegisterForReflection

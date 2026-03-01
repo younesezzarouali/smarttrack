@@ -48,6 +48,7 @@ class HabitResource(
             targetValue = request.target,
             frequency = request.frequency,
             category = request.category,
+            priority = request.priority,
             active = true,
             createdAt = System.currentTimeMillis()
         )
@@ -55,6 +56,15 @@ class HabitResource(
         repository.saveHabit("default-user", habit)
         habitService.syncDailyProgress()
         return Response.status(Response.Status.CREATED).entity(habit).build()
+    }
+
+    @POST
+    @Path("/{id}/log")
+    @Blocking
+    fun logProgress(@PathParam("id") id: String, request: HabitLogRequest): Response {
+        val updatedHabit = habitService.logHabitProgress("default-user", id, request.delta, request.source)
+            ?: return Response.status(Response.Status.NOT_FOUND).build()
+        return Response.ok(updatedHabit).build()
     }
 
     @DELETE

@@ -41,7 +41,9 @@ class HabitService(
                     unit = item["unit"]?.s() ?: "min",
                     frequency = item["frequency"]?.s() ?: "DAILY",
                     category = item["category"]?.s() ?: "LIFE",
-                    streak = item["streak"]?.n()?.toInt() ?: 0,
+                    currentStreak = item["currentStreak"]?.n()?.toInt() ?: item["streak"]?.n()?.toInt() ?: 0,
+                    longestStreak = item["longestStreak"]?.n()?.toInt() ?: 0,
+                    priority = item["priority"]?.n()?.toInt() ?: 2,
                     lastCompletedDate = item["lastCompletedDate"]?.s() ?: "",
                     active = item["active"]?.bool() ?: true
                 )
@@ -52,6 +54,32 @@ class HabitService(
         }
     }
 
+    fun logHabitProgress(userId: String, habitId: String, delta: Double, source: String): Habit? {
+        val today = LocalDate.now().format(DateTimeFormatter.ISO_DATE)
+        val habits = getHabits(userId)
+        val habit = habits.find { it.id == habitId } ?: return null
+
+        log.infof("Logging progress for habit: %s, delta: %.1f, source: %s", habit.name, delta, source)
+
+        // 1. Update Daily Progress Snapshot
+        val currentProgress = getDailyProgress(userId) ?: HabitProgress(userId = userId, date = today)
+        val newProgressMap = currentProgress.progressMap.toMutableMap()
+        val currentVal = newProgressMap[habitId] ?: 0.0
+        val newVal = currentVal + delta
+        newProgressMap[habitId] = newVal
+
+        val newCompletedIds = currentProgress.completedIds.toMutableList()
+        if (newVal >= habit.targetValue && !newCompletedIds.contains(habitId)) {
+            newCompletedIds.add(habitId)
+            updateStreak(habit, today)
+        }
+
+        saveProgress(userId, today, newProgressMap, newCompletedIds)
+        
+        // Return updated habit
+        return habits.find { it.id == habitId } 
+    }
+
     fun syncDailyProgress(userId: String = "default-user") {
         val todayStr = LocalDate.now().format(DateTimeFormatter.ISO_DATE)
         val habits = getHabits(userId)
@@ -60,45 +88,20 @@ class HabitService(
         val sinceTs = Instant.now().minus(24, ChronoUnit.HOURS).toEpochMilli()
         val recentEvents = eventService.listAll(userId, sinceTimestamp = sinceTs)
 
-        log.infof("Syncing %d habits with %d events. Window since: %d", habits.size, recentEvents.size, sinceTs)
-
         val progressMap = mutableMapOf<String, Double>()
         val newlyCompleted = mutableListOf<String>()
 
         habits.forEach { habit ->
-            log.infof("--- Analyzing habit: %s (%s) ---", habit.name, habit.id)
-            
             val matchingEvents = recentEvents.filter { event ->
                 val linkedId = event.payload["linkedHabitId"]
-                
-                // 1. Explicit link (Strongest)
-                if (linkedId != null) {
-                    val isMatch = linkedId == habit.id
-                    if (isMatch) log.infof("  Match by ID: %s", event.content)
-                    isMatch
-                } 
-                // 2. Semantic name match (Only if NO other habit is linked)
-                else {
-                    val isMatch = event.content.contains(habit.name, ignoreCase = true) || 
-                                 habit.name.contains(event.content, ignoreCase = true)
-                    
-                    // Extra safety: only match by name if the event isn't potentially for another active habit
-                    val isPotentiallyConflicting = habits.any { other -> 
-                        other.id != habit.id && event.content.contains(other.name, ignoreCase = true) 
-                    }
-                    
-                    if (isMatch && !isPotentiallyConflicting) {
-                        log.infof("  Match by Name (Safe): %s", event.content)
-                        true
-                    } else false
-                }
+                if (linkedId != null) linkedId == habit.id
+                else event.content.contains(habit.name, ignoreCase = true) || habit.name.contains(event.content, ignoreCase = true)
             }.filter { it.payload.containsKey("duration_min") || it.payload.containsKey("value") }
 
             val totalValue = matchingEvents.sumOf { 
                 it.payload["duration_min"]?.toDoubleOrNull() ?: it.payload["value"]?.toDoubleOrNull() ?: 0.0 
             }
             
-            log.infof("  Final progress for %s: %.1f", habit.name, totalValue)
             progressMap[habit.id] = totalValue
             
             if (totalValue >= habit.targetValue) {
@@ -112,7 +115,11 @@ class HabitService(
     private fun updateStreak(habit: Habit, today: String) {
         if (habit.lastCompletedDate == today) return
         val yesterday = LocalDate.now().minusDays(1).format(DateTimeFormatter.ISO_DATE)
-        habit.streak = if (habit.lastCompletedDate == yesterday) habit.streak + 1 else 1
+        
+        habit.currentStreak = if (habit.lastCompletedDate == yesterday) habit.currentStreak + 1 else 1
+        if (habit.currentStreak > habit.longestStreak) {
+            habit.longestStreak = habit.currentStreak
+        }
         habit.lastCompletedDate = today
         
         val item = mutableMapOf<String, AttributeValue>()
@@ -124,7 +131,9 @@ class HabitService(
         item["unit"] = habit.unit.toAV()
         item["frequency"] = habit.frequency.toAV()
         item["category"] = habit.category.toAV()
-        item["streak"] = habit.streak.toDouble().toAV()
+        item["currentStreak"] = habit.currentStreak.toDouble().toAV()
+        item["longestStreak"] = habit.longestStreak.toDouble().toAV()
+        item["priority"] = habit.priority.toDouble().toAV()
         item["lastCompletedDate"] = habit.lastCompletedDate.toAV()
         item["active"] = AttributeValue.builder().bool(habit.active).build()
         dynamoDbClient.putItem(PutItemRequest.builder().tableName(tableName).item(item).build())

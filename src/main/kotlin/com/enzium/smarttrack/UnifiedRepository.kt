@@ -108,7 +108,6 @@ class UnifiedRepository(private val dynamoDbClient: DynamoDbClient) {
             this.content = item["content"]?.s() ?: ""
             this.fullDescription = item["fullDescription"]?.s() ?: this.content
             this.payload = item["payload"]?.m()?.mapValues { it.value.s() } ?: emptyMap()
-            // On le charge pour le RAG (mais il sera ignoré dans le JSON final pour le front)
             this.embedding = item["embedding"]?.l()?.mapNotNull { it.n().toDoubleOrNull() }
         }
     }
@@ -144,7 +143,9 @@ class UnifiedRepository(private val dynamoDbClient: DynamoDbClient) {
             "targetValue" to habit.targetValue.toAV(),
             "frequency" to habit.frequency.toAV(),
             "category" to habit.category.toAV(),
-            "streak" to habit.streak.toDouble().toAV(),
+            "currentStreak" to habit.currentStreak.toDouble().toAV(),
+            "longestStreak" to habit.longestStreak.toDouble().toAV(),
+            "priority" to habit.priority.toDouble().toAV(),
             "active" to habit.active.toAV(),
             "createdAt" to habit.createdAt.toAV()
         )
@@ -170,7 +171,9 @@ class UnifiedRepository(private val dynamoDbClient: DynamoDbClient) {
             targetValue = item["targetValue"]?.n()?.toDouble() ?: 0.0,
             frequency = item["frequency"]?.s() ?: "DAILY",
             category = item["category"]?.s() ?: "LIFE",
-            streak = item["streak"]?.n()?.toInt() ?: 0,
+            currentStreak = item["currentStreak"]?.n()?.toInt() ?: item["streak"]?.n()?.toInt() ?: 0,
+            longestStreak = item["longestStreak"]?.n()?.toInt() ?: 0,
+            priority = item["priority"]?.n()?.toInt() ?: 2,
             active = item["active"]?.bool() ?: true,
             createdAt = item["createdAt"]?.n()?.toLong() ?: 0L
         )
