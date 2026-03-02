@@ -15,8 +15,7 @@ class EmbeddingService(
     private val log: Logger = Logger.getLogger(EmbeddingService::class.java)
 
     fun getEmbedding(text: String): List<Double> {
-        if (apiKey == "NO_KEY" || text.isBlank()) return emptyList()
-        
+        if (text.isBlank()) return emptyList()
         return try {
             val request = GeminiEmbedRequest(
                 content = EmbeddingContent(parts = listOf(Part(text = text)))
@@ -24,7 +23,7 @@ class EmbeddingService(
             val response = geminiApi.embedContent(apiKey, apiVersion, embeddingModel, request)
             response.embedding.values
         } catch (e: Exception) {
-            log.error("Failed to get embedding from Gemini", e)
+            log.errorf("RAG: Failed to get embedding for text: %s", text, e)
             emptyList()
         }
     }

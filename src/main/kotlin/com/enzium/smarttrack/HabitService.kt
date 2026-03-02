@@ -194,4 +194,15 @@ class HabitService(
             completedIds = item["completedIds"]?.ss()?.filter { it != "NONE" } ?: emptyList()
         )
     }
+
+    fun deleteHabit(id: String, userId: String = "default-user") {
+        val key = mapOf("pk" to "USER#$userId".toAV(), "sk" to "HABIT#$id".toAV())
+        val updateRequest = UpdateItemRequest.builder()
+            .tableName(tableName)
+            .key(key)
+            .updateExpression("SET active = :active")
+            .expressionAttributeValues(mapOf(":active" to AttributeValue.builder().bool(false).build()))
+            .build()
+        dynamoDbClient.updateItem(updateRequest)
+    }
 }

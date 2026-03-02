@@ -7,6 +7,7 @@ import jakarta.ws.rs.core.MediaType
 import org.jboss.logging.Logger
 import java.util.*
 import java.time.Instant
+import com.enzium.smarttrack.services.DiagnosticService
 
 @Path("/life")
 @Produces(MediaType.APPLICATION_JSON)
@@ -14,7 +15,8 @@ import java.time.Instant
 class LifeResource(
     private val geminiService: GeminiService,
     private val eventService: LifeEventService,
-    private val habitService: HabitService
+    private val habitService: HabitService,
+    private val diagnostic: DiagnosticService
 ) {
     private val log: Logger = Logger.getLogger(LifeResource::class.java)
 
@@ -22,22 +24,33 @@ class LifeResource(
     @Path("/magic")
     @Blocking
     fun magic(input: Map<String, String>): Response {
+        diagnostic.mark("t0_request_received")
         val text = input["text"] ?: throw BadRequestException("Input text required")
         log.infof("AI Interaction request (RAG enabled): %s", text)
         
         // 🧠 RAG : Recherche de souvenirs sémantiques
         val relevantMemories = eventService.findRelevantEvents(text)
+        diagnostic.mark("t1_rag_fetched")
         
         // 🕰️ Historique chronologique récent
         val recentHistory = eventService.listAll(limit = 15)
+        diagnostic.mark("t2_history_fetched")
         
         // 🔗 Fusion intelligente sans doublons
         val fullHistoryContext = (relevantMemories + recentHistory).distinctBy { it.timestamp }
         
         val activeHabits = habitService.getHabits()
+        diagnostic.mark("t3_context_ready")
         
         // Délégation à l'IA
         val result = geminiService.interact(text, fullHistoryContext, activeHabits)
+        diagnostic.mark("t4_gemini_complete")
+        
+        diagnostic.logSummary(mapOf(
+            "contextSize" to fullHistoryContext.size,
+            "habitCount" to activeHabits.size
+        ))
+        
         return Response.ok(result).build()
     }
 
@@ -46,7 +59,6 @@ class LifeResource(
     @Blocking
     fun saveBatch(events: List<LifeEvent>): Response {
         log.infof("Committing batch of %d events.", events.size)
-        // Le service gère maintenant le calcul des embeddings automatiquement
         eventService.addEvents(events)
         habitService.syncDailyProgress()
         return Response.status(Response.Status.CREATED).build()
@@ -65,7 +77,6 @@ class LifeResource(
     @Path("/events")
     @Blocking
     fun list(): List<LifeEvent> {
-        // On récupère les 100 derniers et on s'assure qu'ils sont triés par le plus récent d'abord
         return eventService.listAll(limit = 100).sortedByDescending { it.timestamp }
     }
 
